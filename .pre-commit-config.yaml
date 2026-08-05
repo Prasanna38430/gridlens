@@ -1,0 +1,47 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
+# without this every hook runs again at the commit-msg stage, on no files
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: prose-style
+        name: prose style
+        entry: uv run python scripts/check_style.py
+        language: system
+        files: '(^docs/.*\.md$|^README\.md$)'
+
+      - id: commit-style
+        name: commit message style
+        entry: uv run python scripts/check_style.py --commit-msg
+        language: system
+        stages: [commit-msg]
