@@ -1,0 +1,35 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# terraform. state can carry resource attributes and is never committed here,
+# the backend is remote.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
+crash.log
+
+# anything that could hold an entsoe or rte token
+.env
+.env.*
+!.env.example
+*.pem
+credentials
+
+# the session prompt I work from. kept on disk, not in the repo.
+docs/build-prompt.md
+
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
