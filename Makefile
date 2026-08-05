@@ -1,9 +1,17 @@
 .DEFAULT_GOAL := help
 .PHONY: help sync hooks fmt lint typecheck test style check
 
-help: ## list targets
-	@grep -hE '^[a-z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
-		| awk -F':.*?## ' '{printf "%-12s %s\n", $$1, $$2}'
+# spelled out rather than parsed out of the ## comments, because make on
+# windows shells out to cmd.exe and there is no grep or awk there
+help:
+	@echo sync       create .venv and install from uv.lock
+	@echo hooks      install the git hooks
+	@echo fmt        format and autofix
+	@echo lint       ruff, no autofix
+	@echo typecheck  mypy over src and scripts
+	@echo test       pytest
+	@echo style      writing style check over README and docs
+	@echo check      everything CI runs
 
 sync: ## create .venv and install from uv.lock
 	uv sync
