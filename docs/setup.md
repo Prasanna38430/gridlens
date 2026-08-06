@@ -32,8 +32,12 @@ it holds. Without this step `terraform apply` on the bootstrap stack fails with
 an access denied on `aws_budgets_budget`, and the message does not mention this
 setting.
 
-Console, top right account menu, Account. Find "IAM user and role access to
-Billing information", Edit, Activate, Update.
+It has to be done while signed in as the root user. An IAM user holding
+AdministratorAccess cannot change it, which is the reason to do it in the same
+sitting as the MFA setup above rather than later.
+
+Top right account menu, Account. Find "IAM user and role access to Billing
+information", Edit, tick Activate IAM Access, Update.
 
 While in the billing pages, open Cost Explorer once. Forecasted budget alerts
 need historical data to forecast from, so the forecast alert will stay quiet
@@ -53,6 +57,9 @@ Console, IAM Identity Center, Enable. Pick eu-west-3 when it asks for a region.
 Create a user with your email, create a permission set (AdministratorAccess to
 start with), and assign the user to the account with that permission set.
 Copy the AWS access portal URL it gives you.
+
+Set the permission set session duration to 8 hours. The default is 1, which
+means re-authenticating in the middle of every working session.
 
 Then, locally:
 
