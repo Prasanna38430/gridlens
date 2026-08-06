@@ -1,7 +1,7 @@
 # ADR-0001: bitemporal lakehouse over revised grid data
 
 Status: accepted
-Date: 2026-08-05
+Date: 2026-08-06
 
 ## Context
 
