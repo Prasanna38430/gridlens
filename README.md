@@ -38,6 +38,9 @@ Needs Python 3.12 and uv.
 
 `make check` runs what CI runs. `make help` lists the rest.
 
+Accounts, tokens and AWS credentials are in `docs/setup.md`. Start with the
+ENTSO-E token, it is the one with a lead time.
+
 ## Infrastructure
 
 Terraform lives in `infra/terraform`, in two stacks. See the README there for
