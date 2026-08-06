@@ -20,10 +20,15 @@ Take the `state_bucket` output and write it into `core/backend.hcl`:
     bucket = "gridlens-tfstate-<account id>"
 
 Then move bootstrap's own state into that bucket, so it is not sitting in a
-gitignored file on one laptop:
+gitignored file on one laptop. The backend block is already in `main.tf`,
+commented out, with its own state key:
 
-    # add the same backend block to bootstrap, then
+    # uncomment the backend block in main.tf, then
     terraform init -migrate-state -backend-config=../core/backend.hcl
+
+Terraform asks for confirmation and copies the local state up. After that,
+delete `terraform.tfstate` and `terraform.tfstate.backup` from the working
+directory.
 
 ## core
 
