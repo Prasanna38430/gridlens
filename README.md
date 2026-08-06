@@ -36,7 +36,15 @@ Needs Python 3.12 and uv.
     uv sync
     uv run pytest
 
+`make check` runs what CI runs. `make help` lists the rest.
+
+## Infrastructure
+
+Terraform lives in `infra/terraform`, in two stacks. See the README there for
+the apply order and what each resource costs.
+
 ## Known limitations
 
-Nothing is deployed and no data has been ingested. Decisions get recorded in
-`docs/adr/` as they are made.
+Nothing is deployed. The Terraform validates but has never been applied, so no
+AWS resource described here exists yet and no data has been ingested.
+Decisions get recorded in `docs/adr/` as they are made.
