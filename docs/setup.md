@@ -114,34 +114,58 @@ state migration and the core stack.
 
 ## 2. ENTSO-E Transparency Platform
 
-This is the main data source and the one with a real lead time. Start it before
+The main data source, and the one with a real lead time. Start it before
 anything else on this page.
 
-Register at `transparency.entsoe.eu` and confirm the email. Registration alone
-does not give API access. You then have to ask for it, which historically meant
-emailing `transparency@entsoe.eu` from the registered address with a subject
-like "Restful API access" and the registered email in the body, with a
-turnaround of up to three working days.
+Four steps, and registration on its own is not enough. The API entitlement is
+granted by a human after you ask for it by email.
 
-I am not certain that is still the current process. Check the API guide linked
-from the platform's own help pages before sending anything, and follow whatever
-it says over whatever this file says.
+1. Go to `transparency.entsoe.eu`, click Sign In, then the Register link at the
+   bottom of the dialog. The password rules are stricter than most: long, with
+   a special character. Confirm the account through the link that arrives by
+   email.
+2. Send an email to `transparency@entsoe.eu` with `RESTful API access` as the
+   subject and the registered email address in the body. Nothing else is
+   needed.
+3. Access is granted within three working days and you get a confirmation
+   email.
+4. Log back in, open My Account, and generate a token. If one already exists
+   the page warns you before replacing it, and replacing it invalidates the
+   old one.
 
-Once access is granted, log in, open account settings, and generate the web API
-security token. It is a UUID.
+There is a test environment at `iop-transparency.entsoe.eu` with its own
+endpoint at `web-api.tp-iop.entsoe.eu/api`. It holds much less data than
+production, so it is only useful for shape-checking a request.
 
-Check it works before writing any code:
+### Limits that shape the client
 
-    curl "https://web-api.tp.entsoe.eu/api?securityToken=TOKEN&documentType=A75&processType=A16&in_Domain=10YFR-RTE------C&periodStart=202608050000&periodEnd=202608060000"
+400 requests per minute, counted **per token, not per IP**. Going over gets the
+token temporarily banned for about ten minutes, and the platform returns 429
+while that lasts. ENTSO-E suggests throttling to 6 or 7 requests per second on
+average with burst handling.
 
-That asks for actual generation per production type for France for one day.
-`10YFR-RTE------C` is the EIC code for the French bidding zone, `A75` is
-generation per type and `A16` means realised rather than forecast. Times are
-UTC in `yyyyMMddHHmm`.
+Per token is the detail that matters for the design. Running the ingestion from
+several places at once does not buy any headroom, it just reaches the ceiling
+faster, so the limiter has to be shared across every caller rather than being
+per-process. That is why the Day 3 client fetches zones serially.
 
-A working call returns XML. An `AcknowledgementMarketDocument` with a reason
-code is the API telling you what it did not like, and it is worth reading
-rather than retrying.
+### Checking the token works
+
+Production endpoint is `https://web-api.tp.entsoe.eu/api`, https only.
+
+    curl.exe "https://web-api.tp.entsoe.eu/api?securityToken=TOKEN&documentType=A75&processType=A16&in_Domain=10YFR-RTE------C&periodStart=202608050000&periodEnd=202608060000"
+
+Use `curl.exe` and not `curl` in PowerShell. `curl` there is an alias for
+`Invoke-WebRequest`, which takes different arguments and will fail confusingly.
+
+That request asks for actual generation per production type for France over one
+day. `10YFR-RTE------C` is the EIC code for France, `A75` is generation per
+type, `A16` means realised rather than forecast, and the timestamps are UTC in
+`yyyyMMddHHmm`.
+
+XML back means it worked. An `AcknowledgementMarketDocument` means the API
+rejected the query and the reason code inside says why, so read it rather than
+retrying.
 
 ## 3. RTE Data API
 
