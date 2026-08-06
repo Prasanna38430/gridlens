@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help sync hooks fmt lint typecheck test style check
+.PHONY: help sync hooks fmt lint typecheck test style tf check
 
 # spelled out rather than parsed out of the ## comments, because make on
 # windows shells out to cmd.exe and there is no grep or awk there
@@ -10,7 +10,8 @@ help:
 	@echo lint       ruff, no autofix
 	@echo typecheck  mypy over src and scripts
 	@echo test       pytest
-	@echo style      writing style check over README and docs
+	@echo style      writing style check over tracked markdown
+	@echo tf         terraform formatting
 	@echo check      everything CI runs
 
 sync: ## create .venv and install from uv.lock
@@ -33,7 +34,10 @@ typecheck: ## mypy over src
 test: ## pytest
 	uv run pytest
 
-style: ## writing style check over README and docs
+style: ## writing style check over every tracked markdown file
 	uv run python scripts/check_style.py
 
-check: lint typecheck test style ## everything CI runs
+tf: ## terraform formatting
+	terraform fmt -check -recursive infra/terraform
+
+check: lint typecheck test style tf ## everything CI runs

@@ -144,9 +144,15 @@ def check_commit_message(raw: str, label: str) -> list[str]:
 
 
 def _default_paths() -> list[Path]:
-    paths = [Path("README.md")]
-    paths += sorted(Path("docs").rglob("*.md"))
-    return [p for p in paths if p.exists()]
+    # git ls-files rather than a glob, so gitignored notes are not checked
+    out = subprocess.run(
+        ["git", "ls-files", "*.md"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    return [Path(line) for line in out.splitlines() if line]
 
 
 def _range_messages(rev_range: str) -> list[tuple[str, str]]:

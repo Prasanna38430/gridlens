@@ -38,7 +38,14 @@ repos:
         name: prose style
         entry: uv run python scripts/check_style.py
         language: system
-        files: '(^docs/.*\.md$|^README\.md$)'
+        files: '\.md$'
+
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -check -recursive infra/terraform
+        language: system
+        files: '\.tf$'
+        pass_filenames: false
 
       - id: commit-style
         name: commit message style
