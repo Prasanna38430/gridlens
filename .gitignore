@@ -9,13 +9,14 @@ build/
 *.egg-info/
 
 # terraform. state can carry resource attributes and is never committed here,
-# the backend is remote.
+# the backend is remote. the provider lock file is committed on purpose, it is
+# what makes ci resolve the same provider versions I did.
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
 !example.tfvars
+backend.hcl
 crash.log
 
 # anything that could hold an entsoe or rte token
