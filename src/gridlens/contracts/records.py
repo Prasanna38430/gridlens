@@ -22,20 +22,29 @@ class GenerationRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    source: Literal["entsoe"]
-    document_mrid: str = Field(min_length=1)
+    source: Literal["entsoe", "rte"]
+    # entsoe gives every document an mRID. RTE has no equivalent, so this is
+    # None there rather than a value invented to fill the column.
+    source_document_id: str | None = None
     zone: BiddingZone
     production_type: ProductionType
     direction: Literal["generation", "consumption"]
-    unit: Literal["MAW"]
+    # canonical, not what either source calls it. entsoe says MAW, RTE says
+    # nothing at all and means megawatts.
+    unit: Literal["MW"]
     resolution_minutes: Annotated[int, Field(gt=0, le=1440)]
     valid_time: datetime
     known_at: datetime
+    # when the source says it last changed this value. RTE publishes it, entsoe
+    # does not, so it is optional and is never a substitute for known_at.
+    source_updated_at: datetime | None = None
     quantity_mw: Decimal
 
-    @field_validator("valid_time", "known_at")
+    @field_validator("valid_time", "known_at", "source_updated_at")
     @classmethod
-    def _must_be_utc(cls, value: datetime) -> datetime:
+    def _must_be_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None:
             raise ValueError("naive datetime")
         if value.utcoffset() != timedelta(0):

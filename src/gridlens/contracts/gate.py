@@ -40,6 +40,25 @@ class GateResult:
         return len(self.records)
 
 
+# entsoe speaks UN/CEFACT codes, we speak megawatts
+UNITS = {"MAW": "MW"}
+
+
+def build_record(candidate: dict[str, Any]) -> GenerationRecord | Violation:
+    """Build a record, or the violation explaining why it could not be built."""
+    try:
+        return GenerationRecord(**candidate)
+    except ValidationError as exc:
+        return Violation(
+            reason="contract",
+            detail="; ".join(
+                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+                for e in exc.errors()
+            ),
+            payload=_jsonable(candidate),
+        )
+
+
 def apply_gate(document: Document, known_at: datetime) -> GateResult:
     """Split a parsed document into records we accept and violations we keep.
 
@@ -78,29 +97,21 @@ def _gate_series(
     for observation in series.observations:
         candidate: dict[str, Any] = {
             "source": "entsoe",
-            "document_mrid": document.mrid,
+            "source_document_id": document.mrid,
             "zone": series.zone,
             "production_type": series.production_type,
             "direction": series.direction,
-            "unit": series.unit,
+            "unit": UNITS.get(series.unit, series.unit),
             "resolution_minutes": resolution_minutes,
             "valid_time": observation.valid_time,
             "known_at": known_at,
             "quantity_mw": observation.quantity,
         }
-        try:
-            records.append(GenerationRecord(**candidate))
-        except ValidationError as exc:
-            violations.append(
-                Violation(
-                    reason="contract",
-                    detail="; ".join(
-                        f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-                        for e in exc.errors()
-                    ),
-                    payload=_jsonable(candidate),
-                )
-            )
+        built = build_record(candidate)
+        if isinstance(built, GenerationRecord):
+            records.append(built)
+        else:
+            violations.append(built)
 
     for position in series.missing_positions:
         gaps.append(
@@ -120,7 +131,7 @@ def _series_payload(document: Document, series: GenerationSeries) -> dict[str, A
     return _jsonable(
         {
             "source": "entsoe",
-            "document_mrid": document.mrid,
+            "source_document_id": document.mrid,
             "zone": series.zone,
             "production_type": series.production_type,
             "direction": series.direction,

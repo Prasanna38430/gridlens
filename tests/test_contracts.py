@@ -25,11 +25,11 @@ def document(name: str):
 def valid_payload(**overrides):
     payload = {
         "source": "entsoe",
-        "document_mrid": "cb22637fcf6e40a59e840cc2ee7c5293",
+        "source_document_id": "cb22637fcf6e40a59e840cc2ee7c5293",
         "zone": BiddingZone.FR,
         "production_type": ProductionType.NUCLEAR,
         "direction": "generation",
-        "unit": "MAW",
+        "unit": "MW",
         "resolution_minutes": 15,
         "valid_time": datetime(2026, 8, 4, 6, 30, tzinfo=UTC),
         "known_at": KNOWN_AT,

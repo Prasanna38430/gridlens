@@ -10,6 +10,7 @@ from typing import Final
 
 import httpx
 
+from gridlens.ingest.errors import IngestError, RateLimited, SourceUnavailable
 from gridlens.ingest.ratelimit import TokenBucket
 
 BASE_URL: Final = "https://web-api.tp.entsoe.eu/api"
@@ -27,7 +28,7 @@ RATE_LIMIT_COOLDOWN_SECONDS: Final = 600.0
 _NO_DATA_PREFIX: Final = "No matching data found"
 
 
-class EntsoeError(Exception):
+class EntsoeError(IngestError):
     """Base for everything this client raises."""
 
 
@@ -51,14 +52,22 @@ class EntsoeAuthError(EntsoeRejected):
     """Token is wrong, or api access was never granted for it."""
 
 
-class RateLimited(EntsoeError):
-    def __init__(self, retry_after: float) -> None:
-        super().__init__(f"rate limited, do not retry for {retry_after:.0f}s")
-        self.retry_after = retry_after
-
-
-class EntsoeUnavailable(EntsoeError):
+class EntsoeUnavailable(EntsoeError, SourceUnavailable):
     """Transient failures did not clear within the attempt budget."""
+
+
+__all__ = [
+    "BASE_URL",
+    "EntsoeAuthError",
+    "EntsoeClient",
+    "EntsoeError",
+    "EntsoeNoData",
+    "EntsoeRejected",
+    "EntsoeUnavailable",
+    "FetchResult",
+    "RateLimited",
+    "format_period",
+]
 
 
 @dataclass(frozen=True)
