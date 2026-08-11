@@ -45,18 +45,28 @@ Then stop using root. Everything below runs as a separate identity.
 
 ### 1.2 Turn on IAM access to billing
 
-This one is easy to miss and the failure is confusing. Budgets live under the
-billing API, and by default no IAM identity can touch it no matter what policy
-it holds. Without this step `terraform apply` on the bootstrap stack fails with
-an access denied on `aws_budgets_budget`, and the message does not mention this
-setting.
+Root user only. An IAM user holding AdministratorAccess cannot change it, so do
+it in the same sitting as the MFA setup rather than coming back to it.
 
-It has to be done while signed in as the root user. An IAM user holding
-AdministratorAccess cannot change it, which is the reason to do it in the same
-sitting as the MFA setup above rather than later.
+1. Go to `https://console.aws.amazon.com/billing/home#/account`
+2. Find the box headed **IAM user and role access to Billing information** and
+   choose **Edit**
+3. Tick **Activate IAM access**
+4. Choose **Update**
 
-Top right account menu, Account. Find "IAM user and role access to Billing
-information", Edit, tick Activate IAM Access, Update.
+Be clear about what this does. It gates the Billing *console pages* for every
+non-root identity: Bills, Budgets, Cost allocation tags, Cost Explorer, Billing
+preferences. Leave it off and the Identity Center user gets access denied on
+all of them whatever policy it holds, which is confusing because the policy
+looks correct.
+
+It does not gate the Billing *SDK APIs*. AWS lists the Budgets, Cost Explorer
+and Cost and Usage Reports APIs as outside its scope, so Terraform creating
+`aws_budgets_budget` works either way. The setting is about being able to see
+and manage billing as yourself, not about whether the apply succeeds.
+
+Accounts created inside an Organization have it on already. A standalone
+account does not.
 
 While in the billing pages, open Cost Explorer once. Forecasted budget alerts
 need historical data to forecast from, so the forecast alert will stay quiet
