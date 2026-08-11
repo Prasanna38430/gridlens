@@ -219,9 +219,15 @@ shows the base64 of `client_id:client_secret` ready to paste, which is what the
 Authorization header wants.
 
 Auth is OAuth2 client credentials. POST the basic-auth pair to
-`https://digital.iservices.rte-france.com/token/oauth/`, get back a bearer
-token good for about two hours, then send it as `Authorization: Bearer ...` on
-the data calls.
+`https://digital.iservices.rte-france.com/token/oauth/` with
+`grant_type=client_credentials`, and the response is
+`{"access_token", "token_type": "Bearer", "expires_in": 3600}`. One hour, not
+the two hours I first wrote here. Send it as `Authorization: Bearer ...` on the
+data calls.
+
+Pick **Web / Server** when the portal asks for an application type. Mobile
+registers a public client, which by design gets no client secret, and without a
+secret there is no client-credentials grant.
 
 Start with **Actual Generation**, at
 `data.rte-france.com/catalog/-/api/generation/Actual-Generation/v1.1`. Open it
