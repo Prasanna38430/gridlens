@@ -50,14 +50,41 @@ def _instant(text: str) -> datetime:
     return moment.astimezone(UTC)
 
 
-def parse_generation(body: bytes) -> tuple[GenerationSeries, ...]:
+@dataclass(frozen=True)
+class Document:
+    mrid: str
+    revision_number: int
+    document_type: str
+    process_type: str
+    created_at: datetime
+    series: tuple[GenerationSeries, ...]
+
+
+def parse_generation(body: bytes) -> Document:
     """Turn an A75 document into series with real UTC timestamps on every point."""
     root = ET.fromstring(body)
     if _local(root.tag) != "GL_MarketDocument":
         raise ValueError(f"expected GL_MarketDocument, got {_local(root.tag)!r}")
 
-    return tuple(
-        _parse_series(child) for child in root if _local(child.tag) == "TimeSeries"
+    header: dict[str, str] = {}
+    series: list[GenerationSeries] = []
+    for child in root:
+        name = _local(child.tag)
+        if name == "TimeSeries":
+            series.append(_parse_series(child))
+        elif not len(child):
+            header[name] = (child.text or "").strip()
+
+    return Document(
+        mrid=header.get("mRID", ""),
+        revision_number=int(header.get("revisionNumber", "0")),
+        document_type=header.get("type", ""),
+        process_type=header.get("process.processType", ""),
+        # note this is when the platform rendered the document, not when the
+        # figures were published. requesting october 2025 today stamps it with
+        # today, so it is provenance and never known_at.
+        created_at=_instant(header["createdDateTime"]),
+        series=tuple(series),
     )
 
 

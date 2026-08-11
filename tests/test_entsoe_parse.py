@@ -16,7 +16,7 @@ FR = "10YFR-RTE------C"
 
 
 def load(name: str):
-    return parse_generation((FIXTURES / name).read_bytes())
+    return parse_generation((FIXTURES / name).read_bytes()).series
 
 
 def test_rejects_an_acknowledgement():
@@ -69,8 +69,8 @@ def test_the_request_window_matches_what_the_api_returned():
 def test_gaps_are_recorded_and_do_not_shift_the_points_after_them():
     # B01 on the dst day has 92 points spread across 100 positions, with holes
     # scattered through the middle rather than trimmed off the end. zipping
-    # points against a generated timestamp range would move position 29's
-    # value onto position 26's timestamp and every later value with it.
+    # points against a generated timestamp range moves everything after the
+    # first hole earlier by one slot per hole.
     biomass = next(
         s
         for s in load("a75_fr_20251026_dst.xml")
