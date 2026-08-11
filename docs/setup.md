@@ -195,17 +195,44 @@ retrying.
 
 ## 3. RTE Data API
 
-Register at `data.rte-france.com`. Create an application in your account, then
-subscribe the application to each API you want. Subscription is per API, not
-per account, which is the part people miss. The application gives you a client
-id and a client secret.
+Register at `data.rte-france.com`. The APIs this project uses are the public
+ones, which means no partner status and no approval queue. Creating the account
+takes a couple of minutes.
 
-RTE uses OAuth2 client credentials. You exchange the pair for a bearer token
-that lasts a couple of hours, then call the data endpoints with it. Some APIs
-are approved instantly and some are reviewed, so subscribe early.
+Then create an **application**, choosing the **Web/Server** type. The
+application is the thing that holds credentials, and it has to be **subscribed
+to each API separately**. Subscription is per API, not per account, and that is
+the step people skip. Subscribing to one API does not give access to the next.
 
-I have not run this flow myself in this project yet, so treat the details as
-unverified until Day 4 proves them.
+The application gives you a client id and a client secret, and the portal also
+shows the base64 of `client_id:client_secret` ready to paste, which is what the
+Authorization header wants.
+
+Auth is OAuth2 client credentials. POST the basic-auth pair to the token
+endpoint, get back a bearer token good for about two hours, then call the data
+endpoints with it. The exact token URL is on the API's own documentation page
+in the portal, so read it there rather than copying one from a blog.
+
+Start with **Actual Generation**. It is the French near-real-time series that
+gets revised after publication, which is the whole reason this project exists.
+Consumption and the cross-border flows can be added later, and adding a
+subscription is a two-minute job.
+
+There is a quota of 50,000 API calls per user per month on the eco2mix data,
+put in place because people were polling it far faster than it updates. At a
+15 minute cadence one series is about 2,900 calls a month, so the quota is
+generous, but it is a per-user ceiling and worth keeping in the design.
+
+### ODRE covers some of the same ground with no credentials
+
+`odre.opendatasoft.com` republishes the national real-time eco2mix series
+through an open OpenDataSoft API with no authentication at all. If RTE
+registration stalls, that is a way to get real French grid data immediately.
+
+I am still going through RTE's own API for the primary path. It is the
+authoritative source rather than a republication, and the OAuth2 client
+credentials flow is a genuinely different auth pattern from ENTSO-E's token
+query parameter, which is worth having in the project.
 
 ## 4. GitHub
 
