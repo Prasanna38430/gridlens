@@ -17,7 +17,8 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 1 of 30. Nothing works yet.
+Day 3 of 30. The ENTSO-E client works against the live API. Nothing is
+deployed and nothing is stored yet.
 
 ## Intended stack
 
