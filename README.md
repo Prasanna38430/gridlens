@@ -17,8 +17,15 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 3 of 30. The ENTSO-E client works against the live API. Nothing is
-deployed and nothing is stored yet.
+Day 5 of 30. Both source clients work against the live APIs and both normalise
+into one contract. Nothing is stored yet: the lake buckets are written in
+Terraform but not applied, so every run so far has ended in memory.
+
+The first thing the two sources disagreed about is worth stating early. On
+26 October 2025, the day the clocks went back, the French day is 25 hours long.
+ENTSO-E publishes all of it. RTE publishes 24 hourly values across the 25 hour
+window and marks nothing, so an hour of French generation is missing from that
+feed with no indication it was ever there.
 
 ## Intended stack
 
