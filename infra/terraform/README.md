@@ -76,10 +76,15 @@ This account also holds another project, so the budget is not a clean measure
 of what gridlens costs. Both stacks set `project`, `stack` and `managed_by` as
 provider default tags, which means every resource carries them from creation.
 
-Activate `project` as a cost allocation tag in Billing before applying
-anything. Activation only applies to usage recorded after it is switched on,
-so doing it while the account is still empty is the difference between being
-able to answer "what did gridlens cost" and guessing.
+Activate `project` as a cost allocation tag in Billing, in the first day or so
+after the first apply. Not before: AWS only offers a user-defined tag for
+activation once it has seen it on a resource, so on an empty account the list
+is empty and there is nothing to tick.
+
+That ordering is annoying, because activation is not retroactive. Whatever is
+billed between the first apply and the activation is unattributable forever.
+At four empty buckets that is nothing, which is why this is a note rather than
+a blocker, but leave it a week and the Day 29 cost writeup has a hole in it.
 
 The budget itself stays account-wide on purpose. Scoping it to
 `project=gridlens` would look tidier and would miss exactly the thing a budget
