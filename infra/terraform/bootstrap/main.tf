@@ -8,15 +8,15 @@ terraform {
     }
   }
 
-  # chicken and egg. this stack creates the bucket its own state wants to live
-  # in, so the first apply runs on local state. uncomment afterwards and run
+  # chicken and egg. this stack creates the bucket its own state lives in, so
+  # the first apply ran on local state and was migrated here afterwards with
   #   terraform init -migrate-state -backend-config=../core/backend.hcl
-  # backend "s3" {
-  #   key          = "bootstrap/terraform.tfstate"
-  #   region       = "eu-west-3"
-  #   encrypt      = true
-  #   use_lockfile = true
-  # }
+  backend "s3" {
+    key          = "bootstrap/terraform.tfstate"
+    region       = "eu-west-3"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
