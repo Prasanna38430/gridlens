@@ -19,6 +19,25 @@ to need a key, this table gets updated.
 
 ## 1. AWS
 
+### 1.0 Check which plan the account is on
+
+AWS changed the free tier in 2025 and new accounts now pick one of two plans.
+This is worth checking before building anything on the account, because one of
+them has a hard shutdown date.
+
+On the **Free Plan**, the account closes automatically at the earlier of six
+months from opening or the moment the credits run out. Closure means losing
+access to the resources and the data in them. AWS keeps the data for 90 days
+and upgrading reopens the account, after which it is gone.
+
+On the **Paid Plan** there is no automatic closure. Credits are still spent
+first, so nothing is billed until they are gone, and then normal pay as you go
+starts.
+
+Billing and Cost Management, Free Tier in the left nav, shows the plan, the
+credit balance and the expiry date. A 30 day build on an account that closes
+inside those 30 days is not a good trade, so check the date before Day 3.
+
 ### 1.1 Protect the root user
 
 Sign in to the console as root, open Security credentials, and turn on MFA.
