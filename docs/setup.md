@@ -218,20 +218,47 @@ The application gives you a client id and a client secret, and the portal also
 shows the base64 of `client_id:client_secret` ready to paste, which is what the
 Authorization header wants.
 
-Auth is OAuth2 client credentials. POST the basic-auth pair to the token
-endpoint, get back a bearer token good for about two hours, then call the data
-endpoints with it. The exact token URL is on the API's own documentation page
-in the portal, so read it there rather than copying one from a blog.
+Auth is OAuth2 client credentials. POST the basic-auth pair to
+`https://digital.iservices.rte-france.com/token/oauth/`, get back a bearer
+token good for about two hours, then send it as `Authorization: Bearer ...` on
+the data calls.
 
-Start with **Actual Generation**. It is the French near-real-time series that
+Start with **Actual Generation**, at
+`data.rte-france.com/catalog/-/api/generation/Actual-Generation/v1.1`. Open it
+and press **Subscribe to API**. It is the French near-real-time series that
 gets revised after publication, which is the whole reason this project exists.
-Consumption and the cross-border flows can be added later, and adding a
-subscription is a two-minute job.
+The page shows "This API is not attached to any application" until the
+subscription goes through, which is the quickest way to check whether you
+actually did it.
 
-There is a quota of 50,000 API calls per user per month on the eco2mix data,
-put in place because people were polling it far faster than it updates. At a
-15 minute cadence one series is about 2,900 calls a month, so the quota is
-generous, but it is a per-user ceiling and worth keeping in the design.
+The resource we want is:
+
+    GET https://digital.iservices.rte-france.com/open_api/actual_generation/v1
+        /actual_generations_per_production_type?start_date=...&end_date=...
+
+There are sibling resources on the same subscription: `actual_generations_per_unit`,
+`water_reserves`, and `generation_mix_15min_time_scale`. Each also has a
+`/sandbox/` variant that returns canned data, which is useful for checking the
+shape of a request without burning quota.
+
+### What their guide says that matters for the client
+
+Dates are `YYYY-MM-DDThh:mm:sszzzzzz` and, unlike ENTSO-E, **may carry any
+offset**. So `2026-10-25T00:00:00+02:00` is accepted directly and there is no
+need to convert the local settlement day to UTC first. Convenient, and a good
+reason to keep the conversion explicit anyway so both sources agree.
+
+No more than **155 days per call**, and they ask for no more than one call an
+hour on this resource.
+
+The error codes are more informative than ENTSO-E's. 401 means bad credentials,
+**403 means the caller has no application on the portal**, and 429 comes with a
+`Retry-After` header in seconds. That last one is worth noting: ENTSO-E gives
+no such header, which is why the client falls back to a ten minute default.
+
+There is a separate quota of 50,000 API calls per user per month on the eco2mix
+data. At a 15 minute cadence one series is about 2,900 calls a month, so it is
+generous, but it is a per-user ceiling.
 
 ### ODRE covers some of the same ground with no credentials
 
