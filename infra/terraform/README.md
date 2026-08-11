@@ -56,6 +56,23 @@ Everything here is either free tier or too small to bill.
 
 The first real cost appears when data lands in the raw bucket, which is Day 6.
 
+### Attribution, since the account is shared
+
+This account also holds another project, so the budget is not a clean measure
+of what gridlens costs. Both stacks set `project`, `stack` and `managed_by` as
+provider default tags, which means every resource carries them from creation.
+
+Activate `project` as a cost allocation tag in Billing before applying
+anything. Activation only applies to usage recorded after it is switched on,
+so doing it while the account is still empty is the difference between being
+able to answer "what did gridlens cost" and guessing.
+
+The budget itself stays account-wide on purpose. Scoping it to
+`project=gridlens` would look tidier and would miss exactly the thing a budget
+exists to catch: a resource created outside Terraform, with no tags, quietly
+running. A guard rail that only watches the things you remembered to label is
+not a guard rail.
+
 There is no DynamoDB lock table. Terraform 1.10 added S3 native locking, so
 `use_lockfile = true` in the backend block replaces it. That is one fewer
 resource and one fewer thing to pay for.
