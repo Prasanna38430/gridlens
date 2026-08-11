@@ -1,7 +1,7 @@
 # ADR-0002: eu-west-3 for everything that stores data
 
 Status: accepted
-Date: 2026-08-06
+Date: 2026-08-11
 
 ## Context
 
