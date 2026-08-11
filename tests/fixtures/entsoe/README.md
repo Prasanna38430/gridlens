@@ -13,6 +13,13 @@ repository goes public, since these files are republished platform data.
 | `ack_no_data.xml` | same but `periodStart=203001010000&periodEnd=203001020000` | **http 200**, acknowledgement, reason 999 |
 | `ack_bad_domain.xml` | same as the first but `in_Domain=10YNOTAREALZONE1` | http 200, acknowledgement, reason 999, byte-identical shape to no-data |
 | `ack_bad_token.xml` | first request with an all-zero token | http 401, acknowledgement, reason 999 "Authentication failed." |
+| `a75_fr_20251026_dst.xml` | same as the first but `periodStart=202510252200&periodEnd=202510262300` | http 200, 25 hour interval, positions 1 to 100 |
+
+The two success fixtures were requested on different bases on purpose.
+`a75_fr_20260804.xml` uses UTC midnights, so it is a plain 24 hour window that
+sits two hours off the French trading day. `a75_fr_20251026_dst.xml` uses the
+Paris local day for 26 October 2025, which was the autumn clock change, so it
+is 25 hours long and holds 100 quarter-hour positions instead of 96.
 
 Three things these recordings pinned down that the docs do not say plainly.
 
@@ -27,6 +34,13 @@ A zone code that does not exist returns the same "no matching data found" as a
 window that is genuinely empty. There is no way for the client to tell a typo
 from a quiet period, which means zone codes have to be validated before they
 reach the API rather than after.
+
+Point positions are sparse. In the DST fixture, B01 carries 92 points spread
+over 100 positions, and the eight holes are at 25, 29, 34, 39, 43, 63, 82 and
+97, scattered through the middle rather than trimmed off the end. Reading the
+points in order and assigning consecutive timestamps puts position 30 half an
+hour early and drags everything after it along. The gaps are why the parser
+computes each timestamp from the position rather than from the list index.
 
 ## Refreshing these
 
