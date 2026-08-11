@@ -56,6 +56,20 @@ Everything here is either free tier or too small to bill.
 
 The first real cost appears when data lands in the raw bucket, which is Day 6.
 
+### Why one account
+
+At work this would get its own account, and probably three of them under an
+Organization. It does not here, for one reason: the free-plan credits and the
+167 day window are attached to the existing account, and a member account
+created inside the Organization does not inherit them. It would start billing
+immediately.
+
+The isolation that a separate account would have bought is covered another way.
+Every resource is prefixed `gridlens-` so names cannot collide, the ingest
+policy names specific bucket ARNs rather than wildcards, and `terraform destroy`
+only removes what is in this state file. What is genuinely lost is a clean cost
+boundary, which the tags below partly recover.
+
 ### Attribution, since the account is shared
 
 This account also holds another project, so the budget is not a clean measure
