@@ -19,6 +19,10 @@ build/
 backend.hcl
 crash.log
 
+# saved plans hold the whole resolved config, variable values included
+tfplan
+*.tfplan
+
 # anything that could hold an entsoe or rte token
 .env
 .env.*
