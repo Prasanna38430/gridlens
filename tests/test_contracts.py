@@ -197,3 +197,81 @@ def test_resolution_must_be_whole_minutes():
 
     assert result.accepted == 0
     assert result.violations[0].reason == "sub_minute_resolution"
+
+
+class FakeS3:
+    def __init__(self) -> None:
+        self.puts: list[dict[str, object]] = []
+
+    def put_object(self, **kwargs: object) -> dict[str, str]:
+        self.puts.append(kwargs)
+        return {"ETag": "fake"}
+
+
+def one_violation():
+    doc = document("a75_fr_20260804.xml")
+    broken = doc.series[0].__class__(**{**doc.series[0].__dict__, "unit": "KWT"})
+    return apply_gate(
+        doc.__class__(**{**doc.__dict__, "series": (broken,)}), KNOWN_AT
+    ).violations
+
+
+def test_the_s3_sink_writes_one_object_holding_every_row():
+    from gridlens.contracts.quarantine import S3Quarantine
+
+    fake = FakeS3()
+    written = S3Quarantine("gridlens-quarantine-test", fake).write(
+        one_violation(), KNOWN_AT
+    )
+
+    assert written == 93
+    assert len(fake.puts) == 1
+    body = fake.puts[0]["Body"]
+    assert isinstance(body, bytes)
+    assert body.count(b"\n") == 93
+    assert fake.puts[0]["ContentType"] == "application/x-ndjson"
+
+
+def test_the_s3_key_uses_the_same_partition_as_the_file_sink(tmp_path: Path):
+    from gridlens.contracts.quarantine import S3Quarantine
+
+    fake = FakeS3()
+    sink = S3Quarantine("bucket", fake, prefix="entsoe/")
+    sink.write(one_violation(), KNOWN_AT)
+
+    key = str(fake.puts[0]["Key"])
+    assert key.startswith("entsoe/seen_date=2026-08-11/")
+    assert key.endswith(".jsonl")
+
+    FileQuarantine(tmp_path).write(one_violation(), KNOWN_AT)
+    on_disk = next(tmp_path.rglob("*.jsonl"))
+    assert on_disk.parent.name == key.split("/")[1]
+
+
+def test_the_s3_sink_does_not_put_an_empty_object():
+    from gridlens.contracts.quarantine import S3Quarantine
+
+    fake = FakeS3()
+    assert S3Quarantine("bucket", fake).write([], KNOWN_AT) == 0
+    assert fake.puts == []
+
+
+def test_two_writes_never_choose_the_same_key():
+    from gridlens.contracts.quarantine import S3Quarantine
+
+    fake = FakeS3()
+    sink = S3Quarantine("bucket", fake)
+    sink.write(one_violation(), KNOWN_AT)
+    sink.write(one_violation(), KNOWN_AT)
+
+    assert fake.puts[0]["Key"] != fake.puts[1]["Key"]
+
+
+def test_both_sinks_serialise_identically(tmp_path: Path):
+    from gridlens.contracts.quarantine import S3Quarantine
+
+    fake = FakeS3()
+    S3Quarantine("bucket", fake).write(one_violation(), KNOWN_AT)
+    FileQuarantine(tmp_path).write(one_violation(), KNOWN_AT)
+
+    assert fake.puts[0]["Body"] == next(tmp_path.rglob("*.jsonl")).read_bytes()

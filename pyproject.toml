@@ -10,11 +10,16 @@ dependencies = [
 ]
 
 [dependency-groups]
+# boto3 is here rather than in dependencies on purpose. the lambda runtime
+# ships it, so bundling it would add tens of megabytes to every deploy for a
+# copy that never gets used. the cost is that we run against whatever version
+# aws provides, which is a real risk and the reason nothing types against it.
 dev = [
     "pytest>=8.3",
     "ruff>=0.6",
     "mypy>=1.11",
     "pre-commit>=4.0",
+    "boto3>=1.43.72",
 ]
 
 [build-system]
