@@ -38,3 +38,6 @@ docs/build-prompt.md
 *.swp
 .DS_Store
 Thumbs.db
+
+# built lambda artifacts
+build/

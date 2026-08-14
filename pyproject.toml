@@ -41,6 +41,13 @@ python_version = "3.12"
 strict = true
 files = ["src", "scripts"]
 
+# boto3 ships no type information and we deliberately do not pull in the stubs,
+# see the note on the dev group above. everything we call through it is behind
+# a narrow protocol except the handler, which is the one place it is untyped.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
