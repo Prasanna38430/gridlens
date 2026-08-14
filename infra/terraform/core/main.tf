@@ -36,8 +36,10 @@ data "aws_caller_identity" "current" {}
 locals {
   suffix = data.aws_caller_identity.current.account_id
 
+  # these become s3 tag values, which reject commas. the api calls it
+  # InvalidTag and does not say which character it disliked.
   buckets = {
-    raw        = "landing zone, api responses as received"
+    raw        = "landing zone for api responses as received"
     lake       = "iceberg warehouse"
     quarantine = "records that failed the contract gate"
   }
