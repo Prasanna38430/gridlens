@@ -9,3 +9,8 @@ output "bronze_database" {
 output "ingest_role_arn" {
   value = aws_iam_role.ingest.arn
 }
+
+output "ci_role_arn" {
+  value       = aws_iam_role.github_plan.arn
+  description = "set as the AWS_CI_ROLE repository variable in github"
+}
