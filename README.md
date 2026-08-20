@@ -17,15 +17,33 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 5 of 30. Both source clients work against the live APIs and both normalise
-into one contract. Nothing is stored yet: the lake buckets are written in
-Terraform but not applied, so every run so far has ended in memory.
+Day 7 of 30, tagged `v0.1.0`. Ingestion runs in AWS: a Lambda pulls the
+previous French settlement day from ENTSO-E at 06:30 Europe/Paris, lands the
+raw XML in S3, validates it against the contract, and writes anything that
+fails to a quarantine bucket. Roughly 1,400 records a day pass the gate.
+
+Nothing is queryable yet. Bronze, the Iceberg tables and everything above them
+land in week 2, so at this point the lake holds raw responses and nothing else.
 
 The first thing the two sources disagreed about is worth stating early. On
 26 October 2025, the day the clocks went back, the French day is 25 hours long.
 ENTSO-E publishes all of it. RTE publishes 24 hourly values across the 25 hour
 window and marks nothing, so an hour of French generation is missing from that
 feed with no indication it was ever there.
+
+## Repository rules
+
+CI runs ruff, mypy, pytest, the writing style check, a linux rebuild of the
+Lambda bundle, and `terraform plan` against the real account through GitHub
+OIDC. No AWS keys exist in the repository or in its secrets.
+
+`main` is covered by a ruleset that blocks deletion, blocks force pushes and
+requires linear history. Status checks are listed as required, and it is worth
+being exact about what that buys: GitHub evaluates required checks at merge
+time, so they gate pull requests and cannot gate a direct push. CI still runs
+on every push to `main`, it just reports after the fact rather than before.
+Turning that into a real gate means requiring pull requests, which is a
+deliberate trade I have not made yet.
 
 ## Intended stack
 
