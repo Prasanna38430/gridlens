@@ -1,0 +1,113 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# a second push to the same branch cancels the first. ci minutes are free on a
+# public repo but a queue of stale runs makes the branch protection check
+# ambiguous about which one counts.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync
+
+      - name: lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: types
+        run: uv run mypy
+
+      - name: tests
+        run: uv run pytest
+
+      - name: writing style in docs
+        run: uv run python scripts/check_style.py
+
+      - name: commit message style
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run python scripts/check_style.py \
+            --git-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+  package:
+    # the lambda bundle is cross-built from windows locally. building it here
+    # on linux is the check that the two agree, and it fails loudly if a wheel
+    # for the target platform stops existing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: build the lambda zip
+        run: uv run python scripts/build_lambda.py
+
+  terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      # required for the oidc token exchange. contents:read is inherited.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+
+      - name: formatting
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: validate without touching aws
+        run: |
+          for stack in bootstrap core; do
+            terraform -chdir=infra/terraform/$stack init -backend=false -input=false
+            terraform -chdir=infra/terraform/$stack validate
+          done
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: assume the plan-only role
+        if: vars.AWS_CI_ROLE != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE }}
+          aws-region: eu-west-3
+
+      - name: plan core against the real account
+        if: vars.AWS_CI_ROLE != ''
+        run: |
+          # the account id stays out of the repo, so the state bucket name is
+          # derived from whoever we just became rather than hardcoded.
+          account=$(aws sts get-caller-identity --query Account --output text)
+
+          # the lambda zip is not committed and plan reads its hash, so build
+          # it first or plan fails on a missing file.
+          uv sync
+          uv run python scripts/build_lambda.py
+
+          terraform -chdir=infra/terraform/core init -input=false             -backend-config="bucket=gridlens-tfstate-$account"
+          terraform -chdir=infra/terraform/core plan -input=false -lock=false
