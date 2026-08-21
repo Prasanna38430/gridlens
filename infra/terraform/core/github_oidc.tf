@@ -75,6 +75,11 @@ data "aws_iam_policy_document" "github_plan" {
       "s3:GetReplicationConfiguration",
       "glue:GetDatabase",
       "glue:GetTable*",
+      # terraform reads tags back on every resource it manages, and each
+      # service spells that call differently
+      "glue:GetTags",
+      "lambda:ListTags",
+      "scheduler:ListTagsForResource",
       "iam:GetRole",
       "iam:GetRolePolicy",
       "iam:ListRolePolicies",
