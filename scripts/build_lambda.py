@@ -115,6 +115,10 @@ def write_zip() -> Path:
             )
             info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16
+            # ZipInfo takes this from sys.platform, 0 on windows and 3 on
+            # unix, and writes it into the central directory. it is the last
+            # reason two byte identical bundles produced two different hashes.
+            info.create_system = 3
             bundle.writestr(info, path.read_bytes())
     return ARTIFACT
 
