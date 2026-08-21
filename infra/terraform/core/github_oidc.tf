@@ -1,5 +1,12 @@
 locals {
   github_repo = "Prasanna38430/gridlens"
+
+  # github now stamps immutable numeric ids into the subject claim, so it reads
+  # repo:owner@ownerId/repo@repoId:context rather than repo:owner/repo:context.
+  # renaming or transferring a repository cannot be used to inherit a trust
+  # policy that way. these ids come from the api and never change.
+  github_owner_id = 196623752
+  github_repo_id  = 1341085416
 }
 
 # github's own oidc issuer. no long-lived aws keys live in the repo as a
@@ -33,10 +40,16 @@ data "aws_iam_policy_document" "github_assume" {
     # scoped to one repository. a wildcard here would let any repository on
     # github assume a role in this account, which is the whole reason this was
     # left out on day 2 rather than stubbed with a placeholder.
+    # both spellings are listed because the claim format changed under us and
+    # matching only one of them is how this failed the first time. either
+    # pattern still pins one repository, which is the property that matters.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repo}:*"]
+      values = [
+        "repo:${local.github_repo}:*",
+        "repo:${split("/", local.github_repo)[0]}@${local.github_owner_id}/${split("/", local.github_repo)[1]}@${local.github_repo_id}:*",
+      ]
     }
   }
 }

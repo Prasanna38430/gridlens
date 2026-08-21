@@ -90,22 +90,6 @@ jobs:
         with:
           enable-cache: true
 
-      - name: what claims is github actually sending
-        if: vars.AWS_CI_ROLE != ''
-        run: |
-          # prints the identifying claims only, never the token itself. the
-          # trust policy matches on sub and aud, so if the assume fails these
-          # are the two values that decide it.
-          token=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
-          python3 - "$token" <<'PYEOF'
-          import base64, json, sys
-          payload = sys.argv[1].split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-          for k in ("sub", "aud", "repository", "repository_owner", "ref", "iss"):
-              print(f"{k} = {claims.get(k)!r}")
-          PYEOF
-
       - name: assume the plan-only role
         if: vars.AWS_CI_ROLE != ''
         uses: aws-actions/configure-aws-credentials@v4
