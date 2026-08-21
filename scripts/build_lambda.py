@@ -93,31 +93,34 @@ EXCLUDE_DIRS = {"bin", "Scripts", "__pycache__"}
 EXCLUDE_FILES = {"RECORD", "INSTALLER", "direct_url.json", ".lock"}
 
 
+def arcname(path: Path) -> str:
+    return str(path.relative_to(STAGE)).replace("\\", "/")
+
+
 def write_zip() -> Path:
+    # sorted on the archive name, not on the Path. PurePath comparison is
+    # case insensitive on windows and case sensitive elsewhere, so sorting
+    # Path objects orders LICENSE against entry_points.txt differently per
+    # host and the same contents come out as a different archive.
     files = sorted(
-        p
-        for p in STAGE.rglob("*")
-        if p.is_file()
-        and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
-        and p.name not in EXCLUDE_FILES
+        (
+            p
+            for p in STAGE.rglob("*")
+            if p.is_file()
+            and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+            and p.name not in EXCLUDE_FILES
+        ),
+        key=arcname,
     )
     ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
 
-    # stored, not deflated. the contents were byte identical between my
-    # machine and ci and the zip hash still moved, because deflate output is
-    # not specified to be identical across zlib builds and the two hosts ship
-    # different ones. compression was buying 6 MiB against a 50 MiB ceiling
-    # and costing the one property this build exists to provide.
     with zipfile.ZipFile(ARTIFACT, "w", zipfile.ZIP_STORED) as bundle:
         for path in files:
-            info = zipfile.ZipInfo(
-                str(path.relative_to(STAGE)).replace("\\", "/"), date_time=EPOCH
-            )
+            info = zipfile.ZipInfo(arcname(path), date_time=EPOCH)
             info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16
             # ZipInfo takes this from sys.platform, 0 on windows and 3 on
-            # unix, and writes it into the central directory. it is the last
-            # reason two byte identical bundles produced two different hashes.
+            # unix, and writes it into the central directory.
             info.create_system = 3
             bundle.writestr(info, path.read_bytes())
     return ARTIFACT
@@ -139,6 +142,8 @@ def main() -> int:
     # a per-package fingerprint, so when the hash disagrees between two hosts
     # the next question is "which package" rather than "which of nine hundred
     # files". this exists because the answer was not guessable twice running.
+    # note this sorts names as strings, so it compares contents and is blind
+    # to entry order. that blindness hid the ordering bug above for a while.
     rolled: dict[str, hashlib._Hash] = {}
     with zipfile.ZipFile(artifact) as bundle:
         for name in sorted(bundle.namelist()):
