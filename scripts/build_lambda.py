@@ -81,8 +81,18 @@ def stage_source() -> None:
     )
 
 
+# console script shims. lambda never runs them, and uv writes .exe launchers
+# on windows and shell scripts on linux, so leaving them in means the same
+# source produces a different zip depending on who built it.
+EXCLUDE_DIRS = {"bin", "Scripts", "__pycache__"}
+
+
 def write_zip() -> Path:
-    files = sorted(p for p in STAGE.rglob("*") if p.is_file())
+    files = sorted(
+        p
+        for p in STAGE.rglob("*")
+        if p.is_file() and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+    )
     ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(
@@ -123,10 +133,18 @@ def main() -> int:
 
     # a package that cannot be imported is worth catching here rather than at
     # a cold start six hours from now
-    linux_only = [p.name for p in STAGE.rglob("*.pyd")]
-    if linux_only:
+    # .pyd was the obvious one and it missed the .exe launchers entirely,
+    # which is how two windows binaries reached a linux bundle
+    windows_binaries = [
+        str(p.relative_to(STAGE))
+        for pattern in ("*.pyd", "*.exe", "*.dll")
+        for p in STAGE.rglob(pattern)
+        if not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+    ]
+    if windows_binaries:
         print(
-            f"windows binaries staged, this will not run: {linux_only}", file=sys.stderr
+            f"windows binaries staged, this will not run: {windows_binaries}",
+            file=sys.stderr,
         )
         return 1
     if not (STAGE / "pydantic_core").exists():
