@@ -103,14 +103,17 @@ def write_zip() -> Path:
     )
     ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(
-        ARTIFACT, "w", zipfile.ZIP_DEFLATED, compresslevel=9
-    ) as bundle:
+    # stored, not deflated. the contents were byte identical between my
+    # machine and ci and the zip hash still moved, because deflate output is
+    # not specified to be identical across zlib builds and the two hosts ship
+    # different ones. compression was buying 6 MiB against a 50 MiB ceiling
+    # and costing the one property this build exists to provide.
+    with zipfile.ZipFile(ARTIFACT, "w", zipfile.ZIP_STORED) as bundle:
         for path in files:
             info = zipfile.ZipInfo(
                 str(path.relative_to(STAGE)).replace("\\", "/"), date_time=EPOCH
             )
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16
             bundle.writestr(info, path.read_bytes())
     return ARTIFACT
