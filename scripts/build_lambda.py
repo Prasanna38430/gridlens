@@ -86,12 +86,20 @@ def stage_source() -> None:
 # source produces a different zip depending on who built it.
 EXCLUDE_DIRS = {"bin", "Scripts", "__pycache__"}
 
+# RECORD is the installer's manifest and lists the launchers it just wrote,
+# with their names and hashes. Dropping bin/ from the zip is not enough while
+# something inside still describes it as bin/httpx.exe on one host and
+# bin/httpx on another. Nothing reads RECORD at runtime.
+EXCLUDE_FILES = {"RECORD", "INSTALLER", "direct_url.json"}
+
 
 def write_zip() -> Path:
     files = sorted(
         p
         for p in STAGE.rglob("*")
-        if p.is_file() and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+        if p.is_file()
+        and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+        and p.name not in EXCLUDE_FILES
     )
     ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
 
