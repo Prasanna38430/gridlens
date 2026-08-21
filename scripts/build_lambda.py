@@ -90,7 +90,7 @@ EXCLUDE_DIRS = {"bin", "Scripts", "__pycache__"}
 # with their names and hashes. Dropping bin/ from the zip is not enough while
 # something inside still describes it as bin/httpx.exe on one host and
 # bin/httpx on another. Nothing reads RECORD at runtime.
-EXCLUDE_FILES = {"RECORD", "INSTALLER", "direct_url.json"}
+EXCLUDE_FILES = {"RECORD", "INSTALLER", "direct_url.json", ".lock"}
 
 
 def write_zip() -> Path:
@@ -128,6 +128,20 @@ def main() -> int:
     stage_dependencies()
     stage_source()
     artifact = write_zip()
+
+    # a per-package fingerprint, so when the hash disagrees between two hosts
+    # the next question is "which package" rather than "which of nine hundred
+    # files". this exists because the answer was not guessable twice running.
+    rolled: dict[str, hashlib._Hash] = {}
+    with zipfile.ZipFile(artifact) as bundle:
+        for name in sorted(bundle.namelist()):
+            top = name.split("/")[0]
+            rolled.setdefault(top, hashlib.sha256()).update(
+                name.encode() + bundle.read(name)
+            )
+    print("bundle fingerprint by top-level entry:")
+    for top, h in sorted(rolled.items()):
+        print(f"  {h.hexdigest()[:16]}  {top}")
 
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     size = artifact.stat().st_size
