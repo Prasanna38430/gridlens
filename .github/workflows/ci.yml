@@ -63,6 +63,14 @@ jobs:
       - name: build the lambda zip
         run: uv run python scripts/build_lambda.py
 
+      # kept so the artifact can be compared against a locally built one when
+      # the two hosts disagree about its hash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-bundle
+          path: build/gridlens-ingest.zip
+          retention-days: 3
+
   terraform:
     runs-on: ubuntu-latest
     permissions:

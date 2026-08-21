@@ -81,19 +81,47 @@ def stage_source() -> None:
     )
 
 
+# console script shims. lambda never runs them, and uv writes .exe launchers
+# on windows and shell scripts on linux, so leaving them in means the same
+# source produces a different zip depending on who built it.
+EXCLUDE_DIRS = {"bin", "Scripts", "__pycache__"}
+
+# RECORD is the installer's manifest and lists the launchers it just wrote,
+# with their names and hashes. Dropping bin/ from the zip is not enough while
+# something inside still describes it as bin/httpx.exe on one host and
+# bin/httpx on another. Nothing reads RECORD at runtime.
+EXCLUDE_FILES = {"RECORD", "INSTALLER", "direct_url.json", ".lock"}
+
+
+def arcname(path: Path) -> str:
+    return str(path.relative_to(STAGE)).replace("\\", "/")
+
+
 def write_zip() -> Path:
-    files = sorted(p for p in STAGE.rglob("*") if p.is_file())
+    # sorted on the archive name, not on the Path. PurePath comparison is
+    # case insensitive on windows and case sensitive elsewhere, so sorting
+    # Path objects orders LICENSE against entry_points.txt differently per
+    # host and the same contents come out as a different archive.
+    files = sorted(
+        (
+            p
+            for p in STAGE.rglob("*")
+            if p.is_file()
+            and not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+            and p.name not in EXCLUDE_FILES
+        ),
+        key=arcname,
+    )
     ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(
-        ARTIFACT, "w", zipfile.ZIP_DEFLATED, compresslevel=9
-    ) as bundle:
+    with zipfile.ZipFile(ARTIFACT, "w", zipfile.ZIP_STORED) as bundle:
         for path in files:
-            info = zipfile.ZipInfo(
-                str(path.relative_to(STAGE)).replace("\\", "/"), date_time=EPOCH
-            )
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info = zipfile.ZipInfo(arcname(path), date_time=EPOCH)
+            info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16
+            # ZipInfo takes this from sys.platform, 0 on windows and 3 on
+            # unix, and writes it into the central directory.
+            info.create_system = 3
             bundle.writestr(info, path.read_bytes())
     return ARTIFACT
 
@@ -111,6 +139,22 @@ def main() -> int:
     stage_source()
     artifact = write_zip()
 
+    # a per-package fingerprint, so when the hash disagrees between two hosts
+    # the next question is "which package" rather than "which of nine hundred
+    # files". this exists because the answer was not guessable twice running.
+    # note this sorts names as strings, so it compares contents and is blind
+    # to entry order. that blindness hid the ordering bug above for a while.
+    rolled: dict[str, hashlib._Hash] = {}
+    with zipfile.ZipFile(artifact) as bundle:
+        for name in sorted(bundle.namelist()):
+            top = name.split("/")[0]
+            rolled.setdefault(top, hashlib.sha256()).update(
+                name.encode() + bundle.read(name)
+            )
+    print("bundle fingerprint by top-level entry:")
+    for top, h in sorted(rolled.items()):
+        print(f"  {h.hexdigest()[:16]}  {top}")
+
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     size = artifact.stat().st_size
     print(
@@ -123,10 +167,18 @@ def main() -> int:
 
     # a package that cannot be imported is worth catching here rather than at
     # a cold start six hours from now
-    linux_only = [p.name for p in STAGE.rglob("*.pyd")]
-    if linux_only:
+    # .pyd was the obvious one and it missed the .exe launchers entirely,
+    # which is how two windows binaries reached a linux bundle
+    windows_binaries = [
+        str(p.relative_to(STAGE))
+        for pattern in ("*.pyd", "*.exe", "*.dll")
+        for p in STAGE.rglob(pattern)
+        if not EXCLUDE_DIRS & set(p.relative_to(STAGE).parts)
+    ]
+    if windows_binaries:
         print(
-            f"windows binaries staged, this will not run: {linux_only}", file=sys.stderr
+            f"windows binaries staged, this will not run: {windows_binaries}",
+            file=sys.stderr,
         )
         return 1
     if not (STAGE / "pydantic_core").exists():
