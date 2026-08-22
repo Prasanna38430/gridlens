@@ -15,6 +15,8 @@ from gridlens.contracts.reference import BiddingZone
 from gridlens.ingest import redaction
 from gridlens.ingest.entsoe import EntsoeClient, EntsoeNoData, RateLimited
 from gridlens.ingest.entsoe_parse import parse_generation
+from gridlens.lake.bronze import load_batch
+from gridlens.lake.staging import StagingArea
 from gridlens.timeaxis import settlement_day
 
 log = logging.getLogger("gridlens")
@@ -111,6 +113,20 @@ def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]
         _env("GRIDLENS_QUARANTINE_BUCKET"), s3, prefix="entsoe"
     ).write(result.violations, known_at)
 
+    # staged as ndjson, then appended by athena. the alternative was pyiceberg,
+    # which drags pyarrow and roughly a hundred megabytes into a bundle that is
+    # currently nine.
+    raw_bucket = _env("GRIDLENS_RAW_BUCKET")
+    batch_id, staged = StagingArea(raw_bucket, s3).write(result.records)
+    loaded: dict[str, Any] = {}
+    if staged:
+        loaded = load_batch(
+            boto3.client("athena"),
+            batch_id,
+            database=_env("GRIDLENS_BRONZE_DATABASE", "gridlens_bronze"),
+            workgroup=_env("GRIDLENS_ATHENA_WORKGROUP", "gridlens"),
+        )
+
     summary = {
         "zone": zone.name,
         "valid_date": day.isoformat(),
@@ -120,6 +136,9 @@ def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]
         "accepted": result.accepted,
         "quarantined": quarantined,
         "gaps": len(result.gaps),
+        "batch_id": batch_id,
+        "loaded_rows": staged,
+        "load_scanned_bytes": loaded.get("scanned_bytes", 0),
     }
     log.info("done %s", summary)
     return summary
