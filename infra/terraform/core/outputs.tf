@@ -14,3 +14,11 @@ output "ci_role_arn" {
   value       = aws_iam_role.github_plan.arn
   description = "set as the AWS_CI_ROLE repository variable in github"
 }
+
+output "athena_workgroup" {
+  value = aws_athena_workgroup.gridlens.name
+}
+
+output "lake_warehouse" {
+  value = "s3://${aws_s3_bucket.data["lake"].id}/bronze/"
+}
