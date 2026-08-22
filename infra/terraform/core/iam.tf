@@ -35,6 +35,84 @@ data "aws_iam_policy_document" "ingest" {
     resources = ["arn:aws:ssm:${var.region}:${local.suffix}:parameter/gridlens/*"]
   }
 
+  # An iceberg commit is read-modify-write on the table metadata: you cannot
+  # append a snapshot without first reading the one you are appending to. So
+  # the lake bucket needs read as well as write, and the write-only property
+  # this role had on day 2 now holds only for raw and quarantine. That is a
+  # real weakening and ADR-0004 records why it is accepted.
+  statement {
+    sid = "ReadWriteTheWarehouse"
+
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:AbortMultipartUpload",
+    ]
+
+    resources = ["${aws_s3_bucket.data["lake"].arn}/*"]
+  }
+
+  # listing the staged batch and the warehouse prefix
+  statement {
+    sid     = "ListTheBucketsItWritesTo"
+    actions = ["s3:ListBucket", "s3:GetBucketLocation"]
+
+    resources = [
+      aws_s3_bucket.data["lake"].arn,
+      aws_s3_bucket.data["raw"].arn,
+    ]
+  }
+
+  # the staged batch is read back out of raw by athena, on this role's behalf
+  statement {
+    sid       = "ReadStagedBatches"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.data["raw"].arn}/staging/*"]
+  }
+
+  statement {
+    sid = "RunTheLoadQuery"
+
+    actions = [
+      "athena:StartQueryExecution",
+      "athena:GetQueryExecution",
+      "athena:GetWorkGroup",
+    ]
+
+    resources = [aws_athena_workgroup.gridlens.arn]
+  }
+
+  # athena writes its result manifest even for an INSERT that returns no rows
+  statement {
+    sid     = "AthenaResults"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"]
+
+    resources = [
+      aws_s3_bucket.athena_results.arn,
+      "${aws_s3_bucket.athena_results.arn}/*",
+    ]
+  }
+
+  # an iceberg commit swaps the metadata pointer on the glue table, so the
+  # writer updates the catalog entry as well as the files
+  statement {
+    sid = "CommitToTheCatalog"
+
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:UpdateTable",
+    ]
+
+    resources = [
+      "arn:aws:glue:${var.region}:${local.suffix}:catalog",
+      "arn:aws:glue:${var.region}:${local.suffix}:database/${aws_glue_catalog_database.bronze.name}",
+      "arn:aws:glue:${var.region}:${local.suffix}:table/${aws_glue_catalog_database.bronze.name}/*",
+    ]
+  }
+
   statement {
     sid       = "DecryptSsmParameters"
     actions   = ["kms:Decrypt"]
