@@ -17,13 +17,22 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 7 of 30, tagged `v0.1.0`. Ingestion runs in AWS: a Lambda pulls the
-previous French settlement day from ENTSO-E at 06:30 Europe/Paris, lands the
-raw XML in S3, validates it against the contract, and writes anything that
-fails to a quarantine bucket. Roughly 1,400 records a day pass the gate.
+Day 9 of 30. Ingestion runs in AWS and lands in Iceberg: a Lambda pulls the
+previous French settlement day from ENTSO-E at 06:30 Europe/Paris, validates it
+against a contract, quarantines anything that fails, and appends the rest to an
+append-only bronze table. Around 1,400 rows a day.
 
-Nothing is queryable yet. Bronze, the Iceberg tables and everything above them
-land in week 2, so at this point the lake holds raw responses and nothing else.
+Bronze never updates. Fetch the same day twice and you get two rows for every
+settlement period, identical apart from `known_at`. When the source revises a
+figure, the old value is still there and still reproducible.
+
+    one settlement period, nuclear, 2026-08-20 12:00
+      known_at 2026-08-22 09:30:18   35285.610
+      known_at 2026-08-22 09:30:48   35285.610
+
+Silver, the `as_of` read and the restatement endpoint are still to come, so
+right now answering "what did we think in March" means writing the window
+function yourself.
 
 The first thing the two sources disagreed about is worth stating early. On
 26 October 2025, the day the clocks went back, the French day is 25 hours long.
