@@ -15,7 +15,8 @@ from gridlens.contracts.reference import BiddingZone
 from gridlens.ingest import redaction
 from gridlens.ingest.entsoe import EntsoeClient, EntsoeNoData, RateLimited
 from gridlens.ingest.entsoe_parse import parse_generation
-from gridlens.lake.bronze import load_batch
+from gridlens.lake.backfill import parse_known_at
+from gridlens.lake.bronze import merge_batch
 from gridlens.lake.staging import StagingArea
 from gridlens.timeaxis import settlement_day
 
@@ -96,7 +97,12 @@ def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]
             log.error("rate limited, retry after %ss", exc.retry_after)
             raise
 
-    known_at = fetched.fetched_at
+    # the scheduler substitutes its scheduled time into the payload, and that
+    # value is identical across retries of the same firing. taking the clock
+    # here instead is what would turn a retry into a phantom revision.
+    known_at = parse_known_at(
+        str(event.get("known_at", "")), lambda: fetched.fetched_at
+    )
     raw_key = (
         f"entsoe/a75/zone={zone.name}/valid_date={day.isoformat()}"
         f"/{known_at:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex}.xml"
@@ -120,9 +126,11 @@ def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]
     batch_id, staged = StagingArea(raw_bucket, s3).write(result.records)
     loaded: dict[str, Any] = {}
     if staged:
-        loaded = load_batch(
+        loaded = merge_batch(
             boto3.client("athena"),
             batch_id,
+            start,
+            end,
             database=_env("GRIDLENS_BRONZE_DATABASE", "gridlens_bronze"),
             workgroup=_env("GRIDLENS_ATHENA_WORKGROUP", "gridlens"),
         )

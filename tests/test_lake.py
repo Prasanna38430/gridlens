@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from gridlens.contracts.gate import apply_gate
 from gridlens.ingest.entsoe_parse import parse_generation
-from gridlens.lake.bronze import BronzeLoadFailed, load_batch
+from gridlens.lake.bronze import BronzeLoadFailed, merge_batch
 from gridlens.lake.staging import StagingArea, serialise
 
 FIXTURES = Path(__file__).parent / "fixtures" / "entsoe"
@@ -96,28 +97,84 @@ def test_an_empty_batch_writes_nothing():
     assert fake.puts == []
 
 
-def test_the_insert_targets_only_the_named_batch():
+WINDOW = (
+    datetime(2026, 8, 3, 22, tzinfo=UTC),
+    datetime(2026, 8, 4, 22, tzinfo=UTC),
+)
+
+
+def test_the_merge_targets_only_the_named_batch():
     athena = FakeAthena(["SUCCEEDED"])
-    load_batch(athena, "abc123", sleep=lambda _: None)
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
 
     sql = athena.queries[0]
     assert "WHERE batch_id = 'abc123'" in sql
-    assert "INSERT INTO gridlens_bronze.generation" in sql
+    assert "MERGE INTO gridlens_bronze.generation" in sql
     # every column cast explicitly, so a bad value fails rather than nulls out
     assert sql.count("CAST(") == 5
+
+
+def test_the_merge_never_updates():
+    # bronze appends. a WHEN MATCHED clause would let a rerun rewrite history,
+    # which is the one thing this table exists not to do.
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    sql = athena.queries[0]
+    assert "WHEN NOT MATCHED THEN INSERT" in sql
+    assert "WHEN MATCHED" not in sql.replace("WHEN NOT MATCHED", "")
+    assert "UPDATE" not in sql
+    assert "DELETE" not in sql
+
+
+def test_the_merge_keys_on_the_full_bitemporal_identity():
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    sql = athena.queries[0]
+    for column in (
+        "zone",
+        "valid_time",
+        "known_at",
+        "source",
+        "production_type",
+        "direction",
+    ):
+        assert f"t.{column} = s.{column}" in sql, column
+
+
+def test_the_merge_carries_a_constant_bound_for_partition_pruning():
+    # the join predicate alone gives athena no constant to prune on, so without
+    # this the merge reads every day in the table to match one.
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    sql = athena.queries[0]
+    assert "t.valid_time >= TIMESTAMP '2026-08-03 22:00:00.000000'" in sql
+    assert "t.valid_time <  TIMESTAMP '2026-08-04 22:00:00.000000'" in sql
+
+
+def test_a_local_window_is_refused():
+    athena = FakeAthena(["SUCCEEDED"])
+    paris = datetime(2026, 8, 4, tzinfo=ZoneInfo("Europe/Paris"))
+    with pytest.raises(ValueError, match="utc aware"):
+        merge_batch(
+            athena, "abc123", paris, paris + timedelta(days=1), sleep=lambda _: None
+        )
+    assert athena.queries == []
 
 
 def test_a_batch_id_that_is_not_plain_hex_is_refused():
     # it goes into a sql string, so anything else is a bug or an injection
     athena = FakeAthena(["SUCCEEDED"])
     with pytest.raises(ValueError, match="plain hex"):
-        load_batch(athena, "abc'; DROP TABLE x --", sleep=lambda _: None)
+        merge_batch(athena, "abc'; DROP TABLE x --", *WINDOW, sleep=lambda _: None)
     assert athena.queries == []
 
 
 def test_it_waits_for_a_running_query():
     athena = FakeAthena(["QUEUED", "RUNNING", "SUCCEEDED"])
-    stats = load_batch(athena, "abc123", sleep=lambda _: None)
+    stats = merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
 
     assert athena.polls == 3
     assert stats["scanned_bytes"] == 472090
@@ -126,4 +183,4 @@ def test_it_waits_for_a_running_query():
 def test_a_failed_load_raises_with_the_reason():
     athena = FakeAthena(["FAILED"])
     with pytest.raises(BronzeLoadFailed, match="it did not work"):
-        load_batch(athena, "abc123", sleep=lambda _: None)
+        merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
