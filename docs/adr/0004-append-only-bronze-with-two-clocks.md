@@ -90,10 +90,11 @@ housekeeping and become the thing that keeps the table readable.
 
 **A retry duplicates.** If the Athena insert succeeds and the Lambda then dies,
 EventBridge retries and appends the same batch again, giving two identical rows
-with the same `known_at`. Append-only means nothing prevents that. Day 10 is
-idempotent backfill and Day 11 is revision dedupe, so the plan already covers
-it, but today the table can hold duplicates and I would rather write that down
-than discover it in a reconciliation three weeks from now.
+with the same `known_at`. Append-only means nothing prevents that.
+
+*Closed on Day 10.* The append became a `MERGE INTO ... WHEN NOT MATCHED THEN
+INSERT` keyed on the full bitemporal identity, and `known_at` stopped being a
+clock reading. See the update below.
 
 **No sort order.** Rows arrive in `known_at` order and scatter across
 `valid_time`, so a range scan touches more files than it needs to. Athena
@@ -106,3 +107,36 @@ Nothing about revisions. If append-only turns out to be unreadable at silver,
 the fix is materialising a resolved view on a schedule, not making bronze
 mutable. Bronze being the one place that never lies about what arrived is the
 foundation the rest of it stands on.
+
+
+## Update, 2026-08-25: how the retry gap was closed
+
+Two changes, and the second one is the one that actually matters.
+
+The append became `MERGE INTO ... WHEN NOT MATCHED THEN INSERT`, keyed on
+`(source, zone, production_type, direction, valid_time, known_at)`. There is
+deliberately no `WHEN MATCHED` clause: if a row with that identity is already
+present then the correct action is nothing. Athena does not even cut a snapshot
+when a merge inserts zero rows, so a rerun leaves no trace at all.
+
+That alone would not have been enough. A merge only recognises a rerun if the
+rerun produces the same key, and `known_at` was `datetime.now()`, so every
+retry invented a fresh timestamp, matched nothing, and inserted the batch again
+looking exactly like a legitimate revision. **`known_at` is now an input.**
+EventBridge Scheduler substitutes its scheduled time into the payload, and that
+value is identical across every retry of the same firing. The backfill takes it
+as an argument. This is the same idea as Airflow's logical date, and it is why
+that concept exists rather than every task reading the clock.
+
+The naming here was a trap worth recording. Day 10 in the plan is called atomic
+partition overwrite, which is the standard idiom for idempotent batch writes:
+the second run replaces the first, so the outcome is the same either way. On a
+bitemporal table that idiom is actively wrong. Overwriting the partition for
+20 August would delete the version learned on the 22nd, which is the one thing
+this table exists to protect. Idempotence here had to mean something narrower:
+rerunning *the same run* inserts nothing, while a *different* run still records
+a new version.
+
+Measured against the live table: a two day backfill added 2,791 rows, an
+identical rerun added zero, and the same range under a new `known_at` added
+2,791 again.
