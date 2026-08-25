@@ -1,5 +1,17 @@
 locals {
-  ingest_function = "gridlens-ingest-entsoe"
+  ingest_function   = "gridlens-ingest-entsoe"
+  backfill_function = "gridlens-backfill-entsoe"
+
+  lambda_environment = {
+    GRIDLENS_RAW_BUCKET         = aws_s3_bucket.data["raw"].id
+    GRIDLENS_QUARANTINE_BUCKET  = aws_s3_bucket.data["quarantine"].id
+    GRIDLENS_ZONE               = "FR"
+    GRIDLENS_ZONE_TZ            = "Europe/Paris"
+    GRIDLENS_ENTSOE_TOKEN_PARAM = "/gridlens/entsoe/token"
+    GRIDLENS_LOOKBACK_DAYS      = "1"
+    GRIDLENS_BRONZE_DATABASE    = aws_glue_catalog_database.bronze.name
+    GRIDLENS_ATHENA_WORKGROUP   = aws_athena_workgroup.gridlens.name
+  }
 }
 
 # created here rather than left to lambda. lambda makes the group on first
@@ -27,14 +39,7 @@ resource "aws_lambda_function" "ingest_entsoe" {
   timeout     = 120
 
   environment {
-    variables = {
-      GRIDLENS_RAW_BUCKET         = aws_s3_bucket.data["raw"].id
-      GRIDLENS_QUARANTINE_BUCKET  = aws_s3_bucket.data["quarantine"].id
-      GRIDLENS_ZONE               = "FR"
-      GRIDLENS_ZONE_TZ            = "Europe/Paris"
-      GRIDLENS_ENTSOE_TOKEN_PARAM = "/gridlens/entsoe/token"
-      GRIDLENS_LOOKBACK_DAYS      = "1"
-    }
+    variables = local.lambda_environment
   }
 
   depends_on = [aws_cloudwatch_log_group.ingest_entsoe]
@@ -95,6 +100,14 @@ resource "aws_scheduler_schedule" "ingest_entsoe" {
     arn      = aws_lambda_function.ingest_entsoe.arn
     role_arn = aws_iam_role.scheduler.arn
 
+    # the scheduler substitutes its own scheduled time here, and that value is
+    # identical on every retry of the same firing. the handler uses it as
+    # known_at, so a retry merges onto the rows the first attempt wrote rather
+    # than inserting them again under a new timestamp.
+    input = jsonencode({
+      known_at = "<aws.scheduler.scheduled-time>"
+    })
+
     retry_policy {
       # the handler raises on a rate limit rather than sleeping through it, and
       # entsoe bans a token for about ten minutes. two quick retries are for a
@@ -103,4 +116,34 @@ resource "aws_scheduler_schedule" "ingest_entsoe" {
       maximum_event_age_in_seconds = 3600
     }
   }
+}
+
+
+# Same package, different entry point. Backfill walks a range of days and can
+# take minutes, so it gets the full fifteen rather than the two the daily run
+# needs. Nothing schedules it: it is invoked by hand today and by airflow from
+# day 15.
+resource "aws_cloudwatch_log_group" "backfill_entsoe" {
+  name              = "/aws/lambda/${local.backfill_function}"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "backfill_entsoe" {
+  function_name = local.backfill_function
+  role          = aws_iam_role.ingest.arn
+  handler       = "gridlens.handlers.backfill_entsoe.handler"
+  runtime       = "python3.12"
+  architectures = ["x86_64"]
+
+  filename         = var.lambda_package
+  source_code_hash = filebase64sha256(var.lambda_package)
+
+  memory_size = 512
+  timeout     = 900
+
+  environment {
+    variables = local.lambda_environment
+  }
+
+  depends_on = [aws_cloudwatch_log_group.backfill_entsoe]
 }
