@@ -46,6 +46,22 @@ touches two partitions. That is correct and cheap. Making the partition follow
 the local day would mean storing a derived column and keeping it in step with a
 timezone database, which is a much worse trade.
 
+## Writes go through a merge, not an insert
+
+Two filters doing different jobs.
+
+The `WHEN NOT MATCHED THEN INSERT` with no `WHEN MATCHED` clause makes a retry
+a no-op. Athena does not even cut a snapshot when a merge inserts nothing.
+
+The subquery in front of it drops staged rows whose value already matches the
+newest version held for that key. Without it the daily run appends 1,400
+identical rows every morning and `known_at` comes to mean "when we last looked"
+rather than "when this value appeared".
+
+Both the merge and the lookback are bounded on `t.valid_time` with a literal.
+The join predicate on its own gives Athena no constant to prune on, so a merge
+for one day would read every day in the table hunting for matches.
+
 ## What Athena cannot do here, tested rather than assumed
 
 **No timezone-aware timestamps.** `timestamp with time zone` and
