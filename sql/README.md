@@ -90,3 +90,27 @@ file path. S3 partitions its keyspace by prefix, so a million files under one
 sequential prefix throttle where the same files spread across hashed prefixes
 do not. It also means the physical layout does not mirror the partition values,
 which is startling the first time you list the bucket.
+
+## Quality checks
+
+`scripts/validate_bronze.py` runs the expectation suite in
+`gridlens.quality.bronze`. It exits non-zero on any failure, so Airflow can
+treat it as a task.
+
+The contract gate already checks every row as it arrives, so this deliberately
+does not repeat that. It checks what a single batch cannot see:
+
+- duplicate bitemporal keys, which the merge is meant to make impossible, so a
+  failure here means the writer is broken rather than the data
+- periods older than now, and values known before the period they describe
+- freshness, measured as hours since the newest `known_at`
+- periods per settlement day, per series
+
+Completeness is grained on the **settlement day**, not the UTC date. A Paris
+day runs 22:00Z to 22:00Z, so grouping on the UTC date splits every fetch
+across two dates and reports 8 periods on one and 88 on the next. The first
+version of this check did exactly that and looked like a catastrophe.
+
+The bounds are measured rather than assumed. A complete day sits between 70
+and 96 periods: 96 is a full day at PT15M, and 70 is solar, which has no
+positions at night because ENTSO-E omits them rather than sending zeros.
