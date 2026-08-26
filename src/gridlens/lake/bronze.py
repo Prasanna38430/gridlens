@@ -42,18 +42,46 @@ _STAGED = """
     WHERE batch_id = '{batch_id}'
 """
 
-# WHEN NOT MATCHED THEN INSERT, and deliberately no WHEN MATCHED clause.
-# Bronze never updates. If a row with this identity is already here then the
-# correct action is nothing, which is exactly what makes a rerun a no-op:
-# athena does not even cut a snapshot when a merge inserts zero rows.
+# Two filters, doing different jobs.
 #
-# The bound on t.valid_time is a partition pruning hint. The join predicate
-# alone gives athena no constant to prune on, so without it the merge reads
-# every day in the table to find matches for one.
+# The subquery drops staged rows whose value already matches the newest version
+# we hold. Without it a daily run appends 1400 rows every morning whether or not
+# anything changed, and known_at stops meaning "when this value appeared" and
+# starts meaning "when we last looked".
+#
+# WHEN NOT MATCHED THEN INSERT, with no WHEN MATCHED clause, is what keeps a
+# retry a no-op. Bronze never updates: if a row with this identity is already
+# here the correct action is nothing.
 MERGE = """
 MERGE INTO {database}.generation t
 USING (
+    WITH staged AS (
 {staged}
+    ),
+    latest AS (
+        SELECT
+            source, zone, production_type, direction, valid_time,
+            quantity_mw, source_updated_at,
+            row_number() OVER (
+                PARTITION BY source, zone, production_type, direction, valid_time
+                ORDER BY known_at DESC
+            ) AS recency
+        FROM {database}.generation
+        WHERE valid_time >= TIMESTAMP '{window_start}'
+          AND valid_time <  TIMESTAMP '{window_end}'
+    )
+    SELECT {staged_columns}
+    FROM staged s
+    LEFT JOIN latest l
+      ON  l.recency = 1
+      AND l.source = s.source
+      AND l.zone = s.zone
+      AND l.production_type = s.production_type
+      AND l.direction = s.direction
+      AND l.valid_time = s.valid_time
+    WHERE l.valid_time IS NULL
+       OR l.quantity_mw <> s.quantity_mw
+       OR l.source_updated_at IS DISTINCT FROM s.source_updated_at
 ) s
 ON  t.zone = s.zone
 AND t.valid_time = s.valid_time
@@ -103,6 +131,7 @@ def merge_batch(
     sql = MERGE.format(
         database=database,
         staged=_STAGED.format(database=database, batch_id=batch_id),
+        staged_columns=", ".join(f"s.{c}" for c in COLUMNS),
         columns=", ".join(COLUMNS),
         values=", ".join(f"s.{c}" for c in COLUMNS),
         window_start=window_start.strftime(SQL_TIMESTAMP),

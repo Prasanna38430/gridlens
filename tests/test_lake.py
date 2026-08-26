@@ -184,3 +184,33 @@ def test_a_failed_load_raises_with_the_reason():
     athena = FakeAthena(["FAILED"])
     with pytest.raises(BronzeLoadFailed, match="it did not work"):
         merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+
+def test_the_merge_skips_values_that_have_not_changed():
+    # a daily run that appended 1400 identical rows every morning would make
+    # known_at mean "when we last looked" instead of "when this appeared"
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    sql = athena.queries[0]
+    assert "l.quantity_mw <> s.quantity_mw" in sql
+    assert "l.source_updated_at IS DISTINCT FROM s.source_updated_at" in sql
+    # a period we have never seen has no latest row to compare against
+    assert "l.valid_time IS NULL" in sql
+
+
+def test_only_the_newest_version_is_compared_against():
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    sql = athena.queries[0]
+    assert "ORDER BY known_at DESC" in sql
+    assert "l.recency = 1" in sql
+
+
+def test_the_lookback_is_bounded_to_the_same_window():
+    # the latest subquery reads bronze, so without this it reads all of it
+    athena = FakeAthena(["SUCCEEDED"])
+    merge_batch(athena, "abc123", *WINDOW, sleep=lambda _: None)
+
+    assert athena.queries[0].count("TIMESTAMP '2026-08-03 22:00:00.000000'") == 2
