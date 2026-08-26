@@ -92,6 +92,8 @@ data "aws_iam_policy_document" "github_plan" {
       "logs:DescribeLogGroups",
       "logs:ListTagsForResource",
       "scheduler:GetSchedule",
+      "athena:GetWorkGroup",
+      "athena:ListTagsForResource",
       "budgets:ViewBudget",
       "budgets:DescribeBudget*",
       "sts:GetCallerIdentity",
