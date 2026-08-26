@@ -74,10 +74,13 @@ def stage_dependencies() -> None:
 
 
 def stage_source() -> None:
+    # quality/ imports great_expectations, which is a dev dependency and is
+    # deliberately not in the bundle. nothing in the handlers imports it, so
+    # shipping it is dead weight that would fail on import if anyone tried.
     shutil.copytree(
         ROOT / "src" / "gridlens",
         STAGE / "gridlens",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "quality"),
     )
 
 
