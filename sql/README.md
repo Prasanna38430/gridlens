@@ -176,3 +176,51 @@ run the table had 78 parquet objects instead of 55 and the manifests doubled to
 61. Nothing is reclaimed until those snapshots expire. That is the next step
 rather than a defect, and it means the test row is out of the live table but
 its bytes are still on disk.
+
+### Snapshot expiry
+
+Compaction hands the storage problem to expiry. `VACUUM` drops snapshots past
+the retention policy and deletes the files they were the last to reference.
+
+    uv run python scripts/athena.py sql/maintenance/expire_snapshots.sql
+
+Retention comes from two table properties, set in
+`sql/maintenance/retention_generation.sql` and repeated in the `CREATE TABLE`
+so a table built from scratch inherits them. A `VACUUM` run before I set them
+reclaimed nothing at all, because every snapshot was newer than whatever the
+default age is. That is worth knowing: `VACUUM` returning success tells you
+nothing about whether it freed anything.
+
+On a fragmented copy of bronze the effect was blunt. Nine snapshots became one,
+157 parquet objects became 32, which is exactly the number of live data files,
+and the bytes under the table went from 1,045,205 to 334,767. Row count did not
+move.
+
+I chose a week, with a floor of five snapshots. The argument is that snapshot
+time travel is an operational undo here, not the audit mechanism. What makes a
+figure reproducible in this project is `known_at` on the row, which survives
+compaction, expiry, and a rebuild of the table from the raw XML in the raw
+bucket. Keeping ninety days of snapshots would multiply the metadata footprint
+to protect a capability the design deliberately does not lean on. If that
+reasoning is wrong, the failure shows up on day 20, when the restatement audit
+re-runs last month and has to reproduce it exactly.
+
+Athena spells the properties `vacuum_max_snapshot_age_seconds` and
+`vacuum_min_snapshots_to_keep`, and stores them as
+`history.expire.max-snapshot-age-ms` and
+`history.expire.min-snapshots-to-keep`. They are aliases for the spec
+properties, so Spark reads the same policy rather than a second one.
+
+### What expiry does not reclaim
+
+Metadata json files. Every commit writes a new one carrying the whole snapshot
+history, and `VACUUM` adds two of its own rather than removing any. Iceberg has
+properties for this, and Athena rejects all of them:
+`write.metadata.previous-versions-max`,
+`write.metadata.delete-after-commit.enabled`,
+`vacuum_max_metadata_file_age_seconds` and `write.target-file-size-bytes` each
+come back as `Unsupported table property key`. So the largest single class of
+metadata on this table grows without a cap that Athena can set, and pruning it
+needs the Iceberg API or Spark. That puts it in the same bucket as the missing
+sort order: a real limitation of driving Iceberg through Athena alone, not
+something to paper over.

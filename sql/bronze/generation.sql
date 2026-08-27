@@ -19,5 +19,9 @@ LOCATION 's3://gridlens-lake-054129814335/bronze/generation/'
 TBLPROPERTIES (
     'table_type' = 'ICEBERG',
     'format' = 'parquet',
-    'write_compression' = 'zstd'
+    'write_compression' = 'zstd',
+    -- retention, so a table created from scratch inherits the same policy the
+    -- live one runs under. see sql/maintenance/retention_generation.sql
+    'vacuum_max_snapshot_age_seconds' = '604800',
+    'vacuum_min_snapshots_to_keep' = '5'
 )
