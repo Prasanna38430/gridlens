@@ -114,3 +114,65 @@ version of this check did exactly that and looked like a catastrophe.
 The bounds are measured rather than assumed. A complete day sits between 70
 and 96 periods: 96 is a full day at PT15M, and 70 is solar, which has no
 positions at night because ENTSO-E omits them rather than sending zeros.
+
+## Table maintenance
+
+Bronze appends about 1,400 rows every morning across two partitions, because a
+Paris settlement day straddles UTC midnight. Each merge writes one file per
+partition it touches, and each one cuts a snapshot, a manifest and a manifest
+list, and rewrites the whole metadata json. Before the first compaction the
+table held 36,347 rows in 55 data files averaging 5,126 bytes, and the metadata
+describing them came to 3.4 times the size of the parquet itself. The metadata
+json alone had grown from 2,418 bytes at the first commit to 32,227 by the
+twenty-eighth, because every commit rewrites it with the full snapshot history.
+That growth is quadratic in the number of commits, and it is the real argument
+for maintenance on a table this small. The small files matter too, but only
+because query planning reads every manifest entry before it reads any data.
+
+`sql/maintenance/optimize_generation.sql` runs a bin-pack rewrite:
+
+    uv run python scripts/athena.py sql/maintenance/optimize_generation.sql
+
+The first run took 55 data files down to 24, one per partition, with the mean
+file size going from 5,126 to 8,625 bytes. Query results did not move. I
+checksummed every row before and after, `FF2F26B4A9F5E4BB` both times, on
+36,347 rows summing to 131,494,126.350 MW.
+
+### Compaction is also what applies a delete
+
+Bronze is append only by design, and it still ended up with a delete file. A
+row written on day 11 to test the revision path was removed with `DELETE` on
+2026-08-26. Athena resolved that as merge-on-read: it wrote a positional delete
+file pointing at row 0 of a data file and left the data file alone. The row was
+masked from every query, and it was still sitting in the parquet.
+
+Compaction is what made the deletion real. `OPTIMIZE` rewrote the file without
+that row and dropped the delete file, so the row count held in data files went
+from 36,348 to 36,347 while the number of rows a query returns did not change.
+
+Athena gives no direct way to see this coming. `$files` lists data files only,
+and `$delete_files`, `$position_deletes` and `$all_files` do not exist in
+Athena at all. The only signal from SQL is that `sum(record_count)` over
+`$files` disagrees with `count(*)` by the number of masked rows.
+`scripts/table_stats.py` reports both numbers side by side for that reason, and
+reads the delete file counts out of the snapshot summary in the metadata json,
+which is the only place they are exposed.
+
+### Why it is bounded, and why storage goes up first
+
+The `WHERE` clause is not decoration. I checked that it restricts the rewrite
+rather than being accepted and ignored: with a bound of `2026-08-20` on a
+deliberately fragmented copy, the seven partitions in range went from 19 files
+to 7 and the seventeen out of range stayed at 51. A relative bound works the
+same way, so the file can be static and a scheduler can just run it.
+
+Seven days covers the daily append plus the revisions that arrive soon after.
+Revisions that land weeks later will refragment an old partition, so a full
+rewrite is worth running occasionally. There is no point doing it nightly.
+
+One thing to expect: compaction on its own makes storage worse. The old files
+stay on S3, held by the snapshots that still reference them, so after the first
+run the table had 78 parquet objects instead of 55 and the manifests doubled to
+61. Nothing is reclaimed until those snapshots expire. That is the next step
+rather than a defect, and it means the test row is out of the live table but
+its bytes are still on disk.
