@@ -104,9 +104,12 @@ resource "aws_scheduler_schedule" "ingest_entsoe" {
     # identical on every retry of the same firing. the handler uses it as
     # known_at, so a retry merges onto the rows the first attempt wrote rather
     # than inserting them again under a new timestamp.
-    input = jsonencode({
-      known_at = "<aws.scheduler.scheduled-time>"
-    })
+    #
+    # written out rather than built with jsonencode, which escapes the angle
+    # brackets to their unicode form. the scheduler substitutes the literal
+    # placeholder only, so the escaped version reached the handler as text and
+    # every run from 2026-08-26 raised on it.
+    input = "{\"known_at\": \"<aws.scheduler.scheduled-time>\"}"
 
     retry_policy {
       # the handler raises on a rate limit rather than sleeping through it, and
