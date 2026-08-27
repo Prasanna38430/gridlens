@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from table_stats import (  # noqa: E402
+    LISTING_LIMIT,
     QueryFailed,
     classify,
     format_report,
@@ -122,38 +123,72 @@ def stats() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     )
 
 
-def test_the_report_states_the_metadata_to_data_ratio():
+def report(
+    summary: dict[str, str] | None = None,
+    live_rows: str = "33548",
+    storage: dict[str, tuple[int, int]] | None = None,
+    unmatched: list[str] | None = None,
+) -> str:
     files, partitions, snapshots = stats()
-    report = format_report(
+    return format_report(
         "gridlens_bronze.generation",
         files,
         partitions,
         snapshots,
-        {"data": (52, 100), "manifests": (28, 200), "metadata json": (29, 100)},
-        [],
+        summary if summary is not None else {},
+        live_rows,
+        storage if storage is not None else {"data": (51, 100)},
+        unmatched if unmatched is not None else [],
     )
-    assert "metadata is 3.0x the data it describes" in report
-    assert "every data object is in the current snapshot" in report
 
 
-def test_unreferenced_objects_are_listed_rather_than_counted():
-    files, partitions, snapshots = stats()
+def test_the_report_states_the_metadata_to_parquet_ratio():
+    text = report(
+        storage={"data": (51, 100), "manifests": (28, 200), "metadata json": (29, 100)}
+    )
+    assert "metadata is 3.0x the parquet it describes" in text
+
+
+def test_a_delete_file_is_counted_as_a_delete_not_an_orphan():
+    # the bug this replaces: $files hides delete files, so the one masking the
+    # day 11 test row was reported as an unreferenced data object.
     stray = "s3://bucket/bronze/generation/data/j1Flgg/zone=10YFR/x.parquet"
-    report = format_report(
-        "gridlens_bronze.generation",
-        files,
-        partitions,
-        snapshots,
-        {"data": (52, 100)},
-        [stray],
+    text = report(
+        summary={"total-delete-files": "1", "total-position-deletes": "1"},
+        live_rows="33547",
+        storage={"data": (52, 100)},
+        unmatched=[stray],
     )
-    assert "1 data object is not in the current snapshot" in report
-    assert stray in report
+    assert "52 parquet objects under data/: 51 in the current snapshot" in text
+    assert "1 delete, 0 unaccounted" in text
+    assert "orphaned" not in text
+    assert stray not in text
+
+
+def test_masked_rows_are_reported_when_deletes_hide_them():
+    text = report(summary={"total-delete-files": "1"}, live_rows="33547")
+    assert "33547 live, 33548 in data files, 1 masked by deletes" in text
+
+
+def test_a_table_with_no_deletes_says_so_plainly():
+    text = report(live_rows="33548")
+    assert "  rows          33548 live\n" in text
+    assert "delete files  0, holding 0 position deletes" in text
+
+
+def test_a_single_position_delete_is_not_pluralised():
+    text = report(summary={"total-delete-files": "1", "total-position-deletes": "1"})
+    assert "holding 1 position delete\n" in text
+
+
+def test_a_long_unaccounted_listing_is_capped():
+    strays = [f"s3://bucket/bronze/generation/data/x{n}.parquet" for n in range(67)]
+    text = report(storage={"data": (89, 100)}, unmatched=strays)
+    assert "67 unaccounted" in text
+    assert strays[0] in text
+    assert strays[LISTING_LIMIT] not in text
+    assert f"and {67 - LISTING_LIMIT} more" in text
 
 
 def test_an_empty_table_does_not_divide_by_zero():
-    files, partitions, snapshots = stats()
-    report = format_report(
-        "gridlens_bronze.generation", files, partitions, snapshots, {}, []
-    )
-    assert "metadata is 0.0x the data it describes" in report
+    assert "metadata is 0.0x the parquet it describes" in report(storage={})

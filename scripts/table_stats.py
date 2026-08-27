@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -13,8 +14,9 @@ import boto3
 TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 
 # Athena exposes a subset of the metadata tables the Iceberg spec describes.
-# $all_files and $all_manifests are not among them, so nothing here can see a
-# file that only an older snapshot still references.
+# $all_files, $delete_files and $position_deletes are not among them, and
+# $files holds data files only. A delete file is therefore invisible from SQL,
+# and the counts for those come out of the snapshot summary instead.
 FILE_STATS = """
 SELECT
     count(*) AS files,
@@ -44,6 +46,14 @@ FROM "{table}$snapshots"
 
 LIVE_FILES = 'SELECT file_path FROM "{table}$files"'
 
+# Answered from manifests, so it scans nothing. It differs from the sum of
+# record_count when delete files are masking rows, and that difference is the
+# only signal Athena gives that any exist.
+LIVE_ROWS = "SELECT count(*) AS rows FROM {table}"
+
+# How many unaccounted paths to name before the listing stops being readable.
+LISTING_LIMIT = 5
+
 
 class QueryEngine(Protocol):
     def start_query_execution(self, **kwargs: Any) -> Any: ...
@@ -53,6 +63,7 @@ class QueryEngine(Protocol):
 
 class ObjectStore(Protocol):
     def get_paginator(self, name: str) -> Any: ...
+    def get_object(self, **kwargs: Any) -> Any: ...
 
 
 class Catalog(Protocol):
@@ -137,15 +148,29 @@ def list_objects(store: ObjectStore, bucket: str, prefix: str) -> dict[str, int]
     return objects
 
 
-def table_root(catalog: Catalog, database: str, table: str) -> str:
-    """The table prefix, read from the catalog pointer rather than guessed."""
+def metadata_location(catalog: Catalog, database: str, table: str) -> str:
+    """The current metadata json, read from the catalog rather than guessed."""
     parameters = catalog.get_table(DatabaseName=database, Name=table)["Table"].get(
         "Parameters", {}
     )
     location: str = parameters.get("metadata_location", "")
     if not location:
         raise QueryFailed(f"{database}.{table} has no metadata_location")
+    return location
+
+
+def table_root(location: str) -> str:
     return location.rsplit("/metadata/", 1)[0] + "/"
+
+
+def current_summary(store: ObjectStore, bucket: str, key: str) -> dict[str, str]:
+    """The newest snapshot's summary, which is where delete file counts live."""
+    document = json.loads(store.get_object(Bucket=bucket, Key=key)["Body"].read())
+    snapshots = document.get("snapshots", [])
+    if not snapshots:
+        return {}
+    summary: dict[str, str] = snapshots[-1].get("summary", {})
+    return summary
 
 
 def format_report(
@@ -153,20 +178,32 @@ def format_report(
     files: dict[str, str],
     partitions: dict[str, str],
     snapshots: dict[str, str],
+    summary: dict[str, str],
+    live_rows: str,
     storage: dict[str, tuple[int, int]],
-    unreferenced: list[str],
+    unmatched: list[str],
 ) -> str:
-    data_bytes = storage.get("data", (0, 0))[1]
+    parquet_bytes = storage.get("data", (0, 0))[1]
     metadata_bytes = sum(
         total for kind, (_, total) in storage.items() if kind != "data"
     )
-    ratio = metadata_bytes / data_bytes if data_bytes else 0.0
+    ratio = metadata_bytes / parquet_bytes if parquet_bytes else 0.0
+
+    deletes = int(summary.get("total-delete-files", 0))
+    positions = int(summary.get("total-position-deletes", 0))
+    masked = int(files["rows"]) - int(live_rows)
+
+    rows = f"  rows          {live_rows} live"
+    if masked:
+        rows += f", {files['rows']} in data files, {masked} masked by deletes"
 
     lines = [
         table,
         "",
-        f"  rows          {files['rows']}",
+        rows,
         f"  data files    {files['files']}",
+        f"  delete files  {deletes}, holding {positions} position"
+        f" {'delete' if positions == 1 else 'deletes'}",
         f"  file size     {files['smallest']} min, {files['mean']} mean,"
         f" {files['largest']} max",
         f"  partitions    {partitions['partitions']},"
@@ -177,24 +214,33 @@ def format_report(
         "",
         "  storage",
     ]
-    for kind in ("data", "manifests", "manifest lists", "metadata json"):
+    for kind, label in (
+        ("data", "parquet"),
+        ("manifests", "manifests"),
+        ("manifest lists", "manifest lists"),
+        ("metadata json", "metadata json"),
+    ):
         count, total = storage.get(kind, (0, 0))
-        lines.append(f"    {kind:<15}{count:>5} objects{total:>10} bytes")
-    lines.append(f"    metadata is {ratio:.1f}x the data it describes")
+        lines.append(f"    {label:<15}{count:>5} objects{total:>10} bytes")
+    lines.append(f"    metadata is {ratio:.1f}x the parquet it describes")
     lines.append("")
 
-    if not unreferenced:
-        lines.append("  every data object is in the current snapshot")
-        return "\n".join(lines)
-
-    # Athena cannot tell these two cases apart. A file an older snapshot still
-    # holds is released when that snapshot expires. A file no snapshot ever
-    # committed is an orphan, and expiry will never touch it.
-    count = len(unreferenced)
-    noun = "object is" if count == 1 else "objects are"
-    lines.append(f"  {count} data {noun} not in the current snapshot,")
-    lines.append("  held by an older snapshot or orphaned by a commit that failed")
-    lines.extend(f"    {key}" for key in unreferenced)
+    # Delete files are parquet under the same data prefix and $files does not
+    # list them, so subtracting the summary's count is the only way to keep
+    # them out of the unaccounted pile. What is left over is either held by an
+    # older snapshot, which expiry releases, or orphaned by a commit that never
+    # landed, which expiry will never touch.
+    leftover = len(unmatched) - deletes
+    on_disk = storage.get("data", (0, 0))[0]
+    lines.append(
+        f"  {on_disk} parquet objects under data/: {files['files']} in the current"
+        f" snapshot, {deletes} delete, {leftover} unaccounted"
+    )
+    if leftover > 0:
+        lines.append("  unaccounted objects are held by an older snapshot or orphaned")
+        lines.extend(f"    {key}" for key in unmatched[:LISTING_LIMIT])
+        if len(unmatched) > LISTING_LIMIT:
+            lines.append(f"    and {len(unmatched) - LISTING_LIMIT} more")
     return "\n".join(lines)
 
 
@@ -221,13 +267,16 @@ def main() -> int:
     files = query(FILE_STATS)[0]
     partitions = query(PARTITION_STATS)[0]
     snapshots = query(SNAPSHOT_STATS)[0]
+    live_rows = query(LIVE_ROWS)[0]["rows"]
     live = {row["file_path"] for row in query(LIVE_FILES)}
 
-    parsed = urlparse(table_root(glue, args.database, args.table))
+    location = metadata_location(glue, args.database, args.table)
+    parsed = urlparse(table_root(location))
     bucket, prefix = parsed.netloc, parsed.path.lstrip("/")
     objects = list_objects(s3, bucket, prefix)
+    summary = current_summary(s3, bucket, urlparse(location).path.lstrip("/"))
 
-    unreferenced = sorted(
+    unmatched = sorted(
         f"s3://{bucket}/{key}"
         for key in objects
         if classify(key) == "data" and f"s3://{bucket}/{key}" not in live
@@ -239,8 +288,10 @@ def main() -> int:
             files,
             partitions,
             snapshots,
+            summary,
+            live_rows,
             group_by_class(objects),
-            unreferenced,
+            unmatched,
         )
     )
     return 0
