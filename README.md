@@ -17,22 +17,32 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 9 of 30. Ingestion runs in AWS and lands in Iceberg: a Lambda pulls the
-previous French settlement day from ENTSO-E at 06:30 Europe/Paris, validates it
-against a contract, quarantines anything that fails, and appends the rest to an
-append-only bronze table. Around 1,400 rows a day.
+Day 14 of 30. Ingestion runs unattended in AWS. At 06:30 Europe/Paris a Lambda
+pulls the previous French settlement day from ENTSO-E, validates it against a
+contract, quarantines anything that fails, and merges the rest into an
+append-only Iceberg table. Around 1,400 rows a day.
 
-Bronze never updates. Fetch the same day twice and you get two rows for every
-settlement period, identical apart from `known_at`. When the source revises a
-figure, the old value is still there and still reproducible.
+Bronze holds 40,351 rows over 26 settlement days, 2026-08-04 to 2026-08-29, in
+30 data files totalling 239 KB. Nothing has been quarantined yet, so the
+contract has not rejected a row in production.
 
-    one settlement period, nuclear, 2026-08-20 12:00
-      known_at 2026-08-22 09:30:18   35285.610
-      known_at 2026-08-22 09:30:48   35285.610
+Bronze never updates. A revision is a new row with a later `known_at`:
+
+    hydro run-of-river, settlement period 2026-08-04 18:30 UTC
+      known_at 2026-08-22 09:24:02   2881.920 MW
+      known_at 2026-08-26 12:00:00   2881.730 MW
+
+ENTSO-E moved that figure by 0.19 MW and we found out four days later. Both
+values are still there, and a query bounded on `known_at` reproduces either.
+
+Across the whole table there are 4,265 second versions, of which 89 changed the
+value. Every one of the 89 is hydro run-of-river. The other 4,176 repeat a
+value unchanged and are an artifact of backfills run before dedupe existed on
+day 11, not of the source revising anything.
 
 Silver, the `as_of` read and the restatement endpoint are still to come, so
-right now answering "what did we think in March" means writing the window
-function yourself.
+answering "what did we think in March" means writing the window function
+yourself today.
 
 The first thing the two sources disagreed about is worth stating early. On
 26 October 2025, the day the clocks went back, the French day is 25 hours long.
@@ -46,13 +56,10 @@ CI runs ruff, mypy, pytest, the writing style check, a linux rebuild of the
 Lambda bundle, and `terraform plan` against the real account through GitHub
 OIDC. No AWS keys exist in the repository or in its secrets.
 
-`main` is covered by a ruleset that blocks deletion, blocks force pushes and
-requires linear history. Status checks are listed as required, and it is worth
-being exact about what that buys: GitHub evaluates required checks at merge
-time, so they gate pull requests and cannot gate a direct push. CI still runs
-on every push to `main`, it just reports after the fact rather than before.
-Turning that into a real gate means requiring pull requests, which is a
-deliberate trade I have not made yet.
+`main` is covered by a ruleset that blocks deletion, blocks force pushes,
+requires linear history and lists the three CI jobs as required status checks.
+It does not require pull requests. Everything goes through a short-lived
+branch and a PR regardless.
 
 ## Intended stack
 
@@ -83,6 +90,42 @@ the apply order and what each resource costs.
 
 ## Known limitations
 
-Nothing is deployed. The Terraform validates but has never been applied, so no
-AWS resource described here exists yet and no data has been ingested.
-Decisions get recorded in `docs/adr/` as they are made.
+Only ENTSO-E is wired up. The RTE client and normalizer work and are tested,
+but nothing schedules them and none of their data is in the lake, so the
+reconciliation this project argues for cannot run yet.
+
+The contract gate computes gaps, meaning periods the source did not publish,
+and nothing stores them. Completeness metrics need that table.
+
+Bronze carries 4,176 redundant revisions from backfills predating dedupe.
+Compaction cannot remove them, because it rewrites files without removing rows,
+and deleting them would mean a `DELETE` against a table whose whole argument is
+that it does not mutate history. They stay.
+
+The Iceberg table has no sort order. Athena's `ALTER TABLE` grammar cannot set
+one, so it needs Spark or the Iceberg API. Metadata json is in the same
+position: every commit rewrites it with the full snapshot history, Athena
+rejects every Iceberg property that would prune it, and it is currently 779 KB
+of bookkeeping on 239 KB of data.
+
+The quality suite is not scheduled. It exists, it passes, and running it is a
+manual step until Airflow lands.
+
+## What broke
+
+The daily schedule failed silently for two mornings, 2026-08-26 and
+2026-08-27. Terraform's `jsonencode` escapes angle brackets, so
+`<aws.scheduler.scheduled-time>` reached EventBridge Scheduler in its escaped
+form, was never substituted, and arrived at the handler as literal text. The
+handler refused it rather than falling back to reading the clock, which was
+the right call and the reason nothing worse happened. `terraform plan` was
+clean throughout, because the deployed state matched a configuration that was
+itself wrong.
+
+Two settlement days went missing and were backfilled at the time we actually
+learned them rather than backdated to the runs they missed, so those two days
+carry a longer revision lag than their neighbours. That is a true record of an
+outage and it stays in the data.
+
+The freshness check in the quality suite would have caught this on the second
+morning. It was not scheduled. That is the lesson worth more than the fix.
