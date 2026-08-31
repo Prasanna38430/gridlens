@@ -114,3 +114,142 @@ version of this check did exactly that and looked like a catastrophe.
 The bounds are measured rather than assumed. A complete day sits between 70
 and 96 periods: 96 is a full day at PT15M, and 70 is solar, which has no
 positions at night because ENTSO-E omits them rather than sending zeros.
+
+## Table maintenance
+
+Bronze appends about 1,400 rows every morning across two partitions, because a
+Paris settlement day straddles UTC midnight. Each merge writes one file per
+partition it touches, and each one cuts a snapshot, a manifest and a manifest
+list, and rewrites the whole metadata json. Before the first compaction the
+table held 36,347 rows in 55 data files averaging 5,126 bytes, and the metadata
+describing them came to 3.4 times the size of the parquet itself. The metadata
+json alone had grown from 2,418 bytes at the first commit to 32,227 by the
+twenty-eighth, because every commit rewrites it with the full snapshot history.
+That growth is quadratic in the number of commits, and it is the real argument
+for maintenance on a table this small. The small files matter too, but only
+because query planning reads every manifest entry before it reads any data.
+
+`sql/maintenance/optimize_generation.sql` runs a bin-pack rewrite:
+
+    uv run python scripts/athena.py sql/maintenance/optimize_generation.sql
+
+The first run took 55 data files down to 24, one per partition, with the mean
+file size going from 5,126 to 8,625 bytes. Query results did not move. I
+checksummed every row before and after, `FF2F26B4A9F5E4BB` both times, on
+36,347 rows summing to 131,494,126.350 MW.
+
+### Compaction is also what applies a delete
+
+Bronze is append only by design, and it still ended up with a delete file. A
+row written on day 11 to test the revision path was removed with `DELETE` on
+2026-08-26. Athena resolved that as merge-on-read: it wrote a positional delete
+file pointing at row 0 of a data file and left the data file alone. The row was
+masked from every query, and it was still sitting in the parquet.
+
+Compaction is what made the deletion real. `OPTIMIZE` rewrote the file without
+that row and dropped the delete file, so the row count held in data files went
+from 36,348 to 36,347 while the number of rows a query returns did not change.
+
+Athena gives no direct way to see this coming. `$files` lists data files only,
+and `$delete_files`, `$position_deletes` and `$all_files` do not exist in
+Athena at all. The only signal from SQL is that `sum(record_count)` over
+`$files` disagrees with `count(*)` by the number of masked rows.
+`scripts/table_stats.py` reports both numbers side by side for that reason, and
+reads the delete file counts out of the snapshot summary in the metadata json,
+which is the only place they are exposed.
+
+### Why it is bounded, and why storage goes up first
+
+The `WHERE` clause is not decoration. I checked that it restricts the rewrite
+rather than being accepted and ignored: with a bound of `2026-08-20` on a
+deliberately fragmented copy, the seven partitions in range went from 19 files
+to 7 and the seventeen out of range stayed at 51. A relative bound works the
+same way, so the file can be static and a scheduler can just run it.
+
+Seven days covers the daily append plus the revisions that arrive soon after.
+Revisions that land weeks later will refragment an old partition, so a full
+rewrite is worth running occasionally. There is no point doing it nightly.
+
+One thing to expect: compaction on its own makes storage worse. The old files
+stay on S3, held by the snapshots that still reference them, so after the first
+run the table had 78 parquet objects instead of 55 and the manifests doubled to
+61. Nothing is reclaimed until those snapshots expire. That is the next step
+rather than a defect, and it means the test row is out of the live table but
+its bytes are still on disk.
+
+### Snapshot expiry
+
+Compaction hands the storage problem to expiry. `VACUUM` drops snapshots past
+the retention policy and deletes the files they were the last to reference.
+
+    uv run python scripts/athena.py sql/maintenance/expire_snapshots.sql
+
+Retention comes from two table properties, set in
+`sql/maintenance/retention_generation.sql` and repeated in the `CREATE TABLE`
+so a table built from scratch inherits them. A `VACUUM` run before I set them
+reclaimed nothing at all, because every snapshot was newer than whatever the
+default age is. That is worth knowing: `VACUUM` returning success tells you
+nothing about whether it freed anything.
+
+On a fragmented copy of bronze the effect was blunt. Nine snapshots became one,
+157 parquet objects became 32, which is exactly the number of live data files,
+and the bytes under the table went from 1,045,205 to 334,767. Row count did not
+move.
+
+I chose a week, with a floor of five snapshots. The argument is that snapshot
+time travel is an operational undo here, not the audit mechanism. What makes a
+figure reproducible in this project is `known_at` on the row, which survives
+compaction, expiry, and a rebuild of the table from the raw XML in the raw
+bucket. Keeping ninety days of snapshots would multiply the metadata footprint
+to protect a capability the design deliberately does not lean on. If that
+reasoning is wrong, the failure shows up on day 20, when the restatement audit
+re-runs last month and has to reproduce it exactly.
+
+Athena spells the properties `vacuum_max_snapshot_age_seconds` and
+`vacuum_min_snapshots_to_keep`, and stores them as
+`history.expire.max-snapshot-age-ms` and
+`history.expire.min-snapshots-to-keep`. They are aliases for the spec
+properties, so Spark reads the same policy rather than a second one.
+
+### What expiry does not reclaim
+
+Metadata json files. Every commit writes a new one carrying the whole snapshot
+history, and `VACUUM` adds two of its own rather than removing any. Iceberg has
+properties for this, and Athena rejects all of them:
+`write.metadata.previous-versions-max`,
+`write.metadata.delete-after-commit.enabled`,
+`vacuum_max_metadata_file_age_seconds` and `write.target-file-size-bytes` each
+come back as `Unsupported table property key`. So the largest single class of
+metadata on this table grows without a cap that Athena can set, and pruning it
+needs the Iceberg API or Spark. That puts it in the same bucket as the missing
+sort order: a real limitation of driving Iceberg through Athena alone, not
+something to paper over.
+
+### Orphan files
+
+An orphan is a file no snapshot ever referenced, usually written by a commit
+that failed after the data landed. Expiry never touches one, because expiry
+only frees what the snapshots it drops were the last to hold.
+
+I went looking for orphans here and there are none. After compaction and
+expiry, `bronze/generation/data/` holds 30 objects and the current snapshot
+references 30, so the arithmetic in `scripts/table_stats.py` leaves nothing
+unaccounted. That check is the deliverable rather than a cleanup script:
+writing a delete loop against a category that is currently empty would be
+guessing at the shape of a problem I have not seen.
+
+One thing I got wrong on the way, which is the reason the report says what it
+says. I found a file the current snapshot did not reference, checked the
+snapshot summary for `added-data-files`, saw nothing, and called it an orphan.
+It was a positional delete file, and the keys that would have told me so are
+`added-delete-files` and `added-position-deletes`. Athena exposes no metadata
+table listing delete files, so `$files` cannot see them and neither could the
+first version of the report.
+
+### DROP TABLE deletes the data
+
+On an Iceberg table Athena's `DROP TABLE` removes the S3 objects as well as
+the catalog entry. I dropped a scratch copy and its prefix went from several
+hundred objects to zero. That is not how an external Hive table behaves, where
+dropping leaves the files, and it is worth knowing before typing it against
+anything holding real data.
