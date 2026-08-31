@@ -224,3 +224,32 @@ metadata on this table grows without a cap that Athena can set, and pruning it
 needs the Iceberg API or Spark. That puts it in the same bucket as the missing
 sort order: a real limitation of driving Iceberg through Athena alone, not
 something to paper over.
+
+### Orphan files
+
+An orphan is a file no snapshot ever referenced, usually written by a commit
+that failed after the data landed. Expiry never touches one, because expiry
+only frees what the snapshots it drops were the last to hold.
+
+I went looking for orphans here and there are none. After compaction and
+expiry, `bronze/generation/data/` holds 30 objects and the current snapshot
+references 30, so the arithmetic in `scripts/table_stats.py` leaves nothing
+unaccounted. That check is the deliverable rather than a cleanup script:
+writing a delete loop against a category that is currently empty would be
+guessing at the shape of a problem I have not seen.
+
+One thing I got wrong on the way, which is the reason the report says what it
+says. I found a file the current snapshot did not reference, checked the
+snapshot summary for `added-data-files`, saw nothing, and called it an orphan.
+It was a positional delete file, and the keys that would have told me so are
+`added-delete-files` and `added-position-deletes`. Athena exposes no metadata
+table listing delete files, so `$files` cannot see them and neither could the
+first version of the report.
+
+### DROP TABLE deletes the data
+
+On an Iceberg table Athena's `DROP TABLE` removes the S3 objects as well as
+the catalog entry. I dropped a scratch copy and its prefix went from several
+hundred objects to zero. That is not how an external Hive table behaves, where
+dropping leaves the files, and it is worth knowing before typing it against
+anything holding real data.
