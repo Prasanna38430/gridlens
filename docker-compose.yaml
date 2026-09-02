@@ -9,7 +9,12 @@
 # are bind mounted read only, because they are small and rarely written.
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.3.1-python3.12
+  # stock airflow plus great expectations and the project's runtime deps.
+  # see docker/airflow.Dockerfile for why gridlens itself is not installed.
+  image: gridlens-airflow:3.3.1
+  build:
+    context: ./docker
+    dockerfile: airflow.Dockerfile
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -86,7 +91,10 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
-    mem_limit: 640m
+    # local executor forks task processes in here, and the quality task imports
+    # pandas and great expectations. 640m was enough for the smoke dag and is
+    # not enough for this one.
+    mem_limit: 1024m
 
   airflow-dag-processor:
     <<: *airflow-common

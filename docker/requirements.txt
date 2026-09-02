@@ -1,0 +1,7 @@
+# Pinned to what uv.lock resolves, so the container runs the same versions the
+# tests do. great-expectations drags pandas, numpy and scipy, which is why it
+# is a dev dependency and must never reach the lambda bundle.
+great-expectations==1.21.0
+httpx==0.28.1
+pydantic==2.13.4
+tzdata==2026.3
