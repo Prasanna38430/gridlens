@@ -1,0 +1,104 @@
+# Local stack. Every service sits behind a profile, because this box has 8 GB
+# and the week 3 and 4 services cannot all run at once.
+#
+#     docker compose --profile airflow up -d
+#
+# Logs go to a named volume rather than a bind mount. The repository lives
+# inside OneDrive, and pointing a process that writes log files every few
+# seconds at a syncing folder is how you get file locks and sync storms. Dags
+# are bind mounted read only, because they are small and rarely written.
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:3.3.1-python3.12
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?run make env first}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?run make env first}
+    # Airflow 3 task processes reach the database through the task execution
+    # api rather than connecting to it. The default points at localhost, which
+    # inside the scheduler container is nothing, so every task dies on connect.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API__BASE_URL: http://localhost:8080
+    # The scheduler parses nothing in airflow 3. A dag that imports a module it
+    # cannot find fails in the dag processor, so its logs are the ones to read.
+    PYTHONPATH: /opt/airflow/project/src
+    AWS_PROFILE: gridlens
+    AWS_DEFAULT_REGION: eu-west-3
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - ./src:/opt/airflow/project/src:ro
+    - ${HOME}/.aws:/home/airflow/.aws:ro
+    - airflow-logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["airflow"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    profiles: ["airflow"]
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow db migrate
+    restart: "no"
+    mem_limit: 640m
+
+  airflow-apiserver:
+    <<: *airflow-common
+    profiles: ["airflow"]
+    command: api-server
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: 640m
+
+  airflow-scheduler:
+    <<: *airflow-common
+    profiles: ["airflow"]
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: 640m
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    profiles: ["airflow"]
+    command: dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: 512m
+
+volumes:
+  airflow-db:
+  airflow-logs:
