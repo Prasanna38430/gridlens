@@ -71,7 +71,7 @@ def parse_generation(body: bytes) -> Document:
     for child in root:
         name = _local(child.tag)
         if name == "TimeSeries":
-            series.append(_parse_series(child))
+            series.extend(_parse_series(child))
         elif not len(child):
             header[name] = (child.text or "").strip()
 
@@ -88,12 +88,23 @@ def parse_generation(body: bytes) -> Document:
     )
 
 
-def _parse_series(node: ET.Element) -> GenerationSeries:
+def _parse_series(node: ET.Element) -> list[GenerationSeries]:
+    """One GenerationSeries per Period, because a TimeSeries can carry several.
+
+    A day the platform published without interruption arrives as one Period.
+    Where publication stopped and resumed, entso-e splits the TimeSeries around
+    the hole rather than emitting one Period full of missing positions. On
+    2026-09-01 every series came back as 22:00 to 00:00 and 10:00 to 22:00,
+    with the ten hours of the outage simply absent.
+
+    Each Period carries its own resolution and interval, so they cannot be
+    stitched into one series without inventing something.
+    """
     production_type = ""
     unit = ""
     in_zone = ""
     out_zone = ""
-    period: ET.Element | None = None
+    periods: list[ET.Element] = []
 
     for child in node:
         name = _local(child.tag)
@@ -108,11 +119,9 @@ def _parse_series(node: ET.Element) -> GenerationSeries:
         elif name == "quantity_Measure_Unit.name":
             unit = (child.text or "").strip()
         elif name == "Period":
-            if period is not None:
-                raise ValueError("more than one Period in a TimeSeries")
-            period = child
+            periods.append(child)
 
-    if period is None:
+    if not periods:
         raise ValueError("TimeSeries with no Period")
 
     # a pumped storage or battery series appears twice, once each way. summing
@@ -128,7 +137,10 @@ def _parse_series(node: ET.Element) -> GenerationSeries:
     else:
         raise ValueError("TimeSeries names no bidding zone")
 
-    return _parse_period(period, zone, production_type, direction, unit)
+    return [
+        _parse_period(period, zone, production_type, direction, unit)
+        for period in periods
+    ]
 
 
 def _parse_period(
