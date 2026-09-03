@@ -1,0 +1,8 @@
+# dbt lives in its own environment, transform/.venv, created by `make dbt-install`.
+#
+# It is a command line tool here, not a library this project imports, and
+# dbt-athena depends on boto3-stubs. Installing it alongside the project would
+# change what mypy sees for every boto3 call and break four call sites that CI,
+# which would not install it, would keep reporting as fine.
+dbt-core==1.12.3
+dbt-athena==1.11.0

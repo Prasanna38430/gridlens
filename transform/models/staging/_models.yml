@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_generation
+    description: >
+      Bronze with two derived columns and no filtering. One row in, one row
+      out, including every historical version of every period.
+
+    columns:
+      - name: settlement_day
+        description: >
+          The Paris date the period belongs to, which is not the UTC date.
+          Every completeness check is grained on this.
+      - name: is_storage
+        description: >
+          True for pumped storage and batteries, which entso-e publishes once
+          as generation and once as consumption.

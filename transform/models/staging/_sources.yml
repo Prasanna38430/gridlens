@@ -1,0 +1,54 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: gridlens_bronze
+    description: >
+      Append only. A revision is a new row with a later known_at, never an
+      update, which is why nothing here is unique on zone and valid_time.
+      Written by the ingest lambda, not by dbt.
+
+    tables:
+      - name: generation
+        description: >
+          One observation of one production type, in one direction, for one
+          settlement period, as it was known at one instant. Full column notes
+          are in docs/data-dictionary.md.
+
+        loaded_at_field: known_at
+        freshness:
+          # the ingest fires at 06:30 paris. a day and a half of silence means
+          # a run was missed, which has now happened twice.
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 60, period: hour}
+
+        columns:
+          - name: source
+            description: Which publisher the row came from. Only entsoe so far.
+          - name: source_document_id
+            description: The mRID of the document it was parsed from. Provenance, not identity.
+          - name: zone
+            description: Bidding zone EIC code.
+          - name: production_type
+            description: ENTSO-E psrType code, B01 to B25.
+          - name: direction
+            description: >
+              generation or consumption. Storage appears in both, so summing by
+              production_type without this double counts it.
+          - name: unit
+            description: Always MW. Kept because the source states it.
+          - name: resolution_minutes
+            description: Period length. Always 15 so far.
+          - name: valid_time
+            description: >
+              Start of the settlement period, UTC. The type carries no zone
+              because Athena rejects one in Iceberg DDL, so UTC is a convention
+              the contract layer enforces upstream.
+          - name: known_at
+            description: >
+              When this project learned the value. An input taken from the
+              scheduler, never a clock reading, so a retry is not a revision.
+          - name: source_updated_at
+            description: The publisher's own revision stamp. Always null from ENTSO-E.
+          - name: quantity_mw
+            description: The measured value.

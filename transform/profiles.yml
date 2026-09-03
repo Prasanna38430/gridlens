@@ -1,0 +1,17 @@
+# No secrets here. Athena authenticates through the local aws profile, and the
+# account id is already in sql/bronze/generation.sql, so nothing in this file
+# is worse than what the repository already publishes.
+gridlens:
+  target: dev
+  outputs:
+    dev:
+      type: athena
+      region_name: eu-west-3
+      database: awsdatacatalog
+      schema: gridlens_silver
+      work_group: gridlens
+      s3_staging_dir: s3://gridlens-athena-054129814335/dbt/
+      s3_data_dir: s3://gridlens-lake-054129814335/silver/
+      s3_data_naming: schema_table
+      aws_profile_name: "{{ env_var('AWS_PROFILE', 'gridlens') }}"
+      threads: 4

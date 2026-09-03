@@ -41,3 +41,9 @@ Thumbs.db
 
 # built lambda artifacts
 build/
+
+# dbt build output, and dbt's own environment
+transform/target/
+transform/logs/
+transform/dbt_packages/
+transform/.venv/

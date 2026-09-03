@@ -1,0 +1,27 @@
+name: gridlens
+version: 0.1.0
+profile: gridlens
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+flags:
+  # off by default here. this is a public repository and a portfolio, and
+  # sending build telemetry from it serves nobody.
+  send_anonymous_usage_stats: false
+
+models:
+  gridlens:
+    staging:
+      # views cost nothing to build and are billed on read like any other
+      # query. nothing in staging is expensive enough to be worth materialising
+      # until there is a measurement saying otherwise.
+      #
+      # no +schema here on purpose. a custom schema would have dbt create a
+      # second glue database, and terraform owns databases in this repository.
+      +materialized: view
