@@ -83,6 +83,39 @@ Needs Python 3.12 and uv.
 Accounts, tokens and AWS credentials are in `docs/setup.md`. Start with the
 ENTSO-E token, it is the one with a lead time.
 
+### The local stack
+
+Airflow 3.3.1 on Docker Compose, LocalExecutor against Postgres.
+
+    make up
+    make password
+
+`make up` generates `.env.docker` if it is missing, then starts four
+containers. The UI is on http://localhost:8080 and the user is `admin`, with a
+password Airflow generates on first start. `make password` prints it. `make
+down` stops everything and keeps the database volume, `make logs` follows the
+scheduler.
+
+Measured on an 8 GB machine with WSL2 capped at 2 GB: 916 MiB across all four
+containers with a task running. That budget is why every service sits behind a
+compose profile, and why Redpanda, Spark and Marquez will get profiles of their
+own rather than joining this one.
+
+Two DAGs so far. `bronze_quality` runs the expectation suite every morning at
+07:30 Paris, after the EventBridge ingest has landed, and fails loudly when an
+expectation does. `smoke` does nothing but import the project inside a task,
+which is how you tell a broken container from a broken DAG.
+
+Airflow does not own the ingest. EventBridge still fires that at 06:30, and
+replacing a scheduler that works with one that is a day old is how you get a
+second outage. Airflow runs the checks that nothing else was running.
+
+Two deliberate choices. Logs live in a named volume rather than a bind mount,
+because this repository sits inside OneDrive and pointing a process that writes
+log files every few seconds at a syncing folder invites file locks. And `src`
+is bind mounted read only onto `PYTHONPATH` rather than installed, so a DAG
+imports the same code the tests run against with no rebuild step.
+
 ## Infrastructure
 
 Terraform lives in `infra/terraform`, in two stacks. See the README there for

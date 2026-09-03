@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gridlens.ingest.entsoe_parse import parse_generation
-from gridlens.timeaxis import settlement_day
+from gridlens.ingest.entsoe_parse import GenerationSeries, parse_generation
+from gridlens.timeaxis import period_count, settlement_day
 
 FIXTURES = Path(__file__).parent / "fixtures" / "entsoe"
 PARIS = ZoneInfo("Europe/Paris")
@@ -121,3 +121,35 @@ def test_the_two_fixtures_were_requested_on_different_bases():
     august = load("a75_fr_20260804.xml")[0]
     assert august.interval_start == datetime(2026, 8, 4, tzinfo=UTC)
     assert august.interval_start.astimezone(PARIS).hour == 2
+
+
+def test_a_timeseries_split_around_a_publication_gap_yields_one_series_each():
+    # 2026-09-01. entso-e was down for ten hours and split every timeseries
+    # into 22:00 to 00:00 and 10:00 to 22:00 rather than emitting one period
+    # with the middle missing.
+    doc = parse_generation((FIXTURES / "a75_fr_20260901_split_period.xml").read_bytes())
+
+    by_key: dict[tuple[str, str], list[GenerationSeries]] = {}
+    for series in doc.series:
+        by_key.setdefault((series.production_type, series.direction), []).append(series)
+
+    assert len(doc.series) == 30, "15 timeseries, two periods each"
+    assert all(len(v) == 2 for v in by_key.values())
+
+    early, late = sorted(by_key[("B14", "generation")], key=lambda s: s.interval_start)
+    assert early.interval_end.hour == 0
+    assert late.interval_start.hour == 10
+    # the hole is real, and nothing invents a position to cover it
+    assert early.interval_end < late.interval_start
+
+
+def test_the_split_periods_keep_their_own_resolution_and_positions():
+    doc = parse_generation((FIXTURES / "a75_fr_20260901_split_period.xml").read_bytes())
+    for series in doc.series:
+        assert series.resolution == timedelta(minutes=15)
+        expected = period_count(
+            series.interval_start, series.interval_end, series.resolution
+        )
+        assert series.expected_positions == expected
+        for observation in series.observations:
+            assert series.interval_start <= observation.valid_time < series.interval_end
