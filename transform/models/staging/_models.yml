@@ -1,5 +1,14 @@
 version: 2
 
+# What is tested here and what is not.
+#
+# dbt tests the model's contract: the columns are there, they are populated,
+# and the coded ones only ever hold codes we know about. Table level
+# invariants, meaning duplicate bitemporal keys, freshness, revision lag and
+# periods per settlement day, live in the expectation suite that Airflow runs
+# at 07:30. Asserting the same thing in two systems means they drift and
+# neither is trusted, so the split is deliberate rather than an oversight.
+
 models:
   - name: stg_generation
     description: >
@@ -7,11 +16,92 @@ models:
       out, including every historical version of every period.
 
     columns:
+      - name: source
+        description: Which publisher the row came from.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["entsoe", "rte"]
+
+      - name: zone
+        description: Bidding zone EIC code.
+        data_tests: [not_null]
+
+      - name: production_type
+        description: ENTSO-E psrType code.
+        data_tests:
+          - not_null
+          # the full common code list. a new code appearing is a real event:
+          # it means the source started publishing something we have never
+          # mapped, and it should fail rather than flow through as a string.
+          - accepted_values:
+              arguments:
+                values:
+                  - B01
+                  - B02
+                  - B03
+                  - B04
+                  - B05
+                  - B06
+                  - B07
+                  - B08
+                  - B09
+                  - B10
+                  - B11
+                  - B12
+                  - B13
+                  - B14
+                  - B15
+                  - B16
+                  - B17
+                  - B18
+                  - B19
+                  - B20
+                  - B21
+                  - B22
+                  - B23
+                  - B24
+                  - B25
+
+      - name: direction
+        description: >
+          generation or consumption. Storage appears in both, so summing by
+          production_type without this double counts it.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["generation", "consumption"]
+
+      - name: unit
+        description: Always MW so far. Kept because the source states it.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["MW"]
+
+      - name: valid_time
+        description: Start of the settlement period, UTC.
+        data_tests: [not_null]
+
+      - name: known_at
+        description: When this project learned the value.
+        data_tests: [not_null]
+
+      - name: quantity_mw
+        description: The measured value.
+        data_tests: [not_null]
+
       - name: settlement_day
         description: >
           The Paris date the period belongs to, which is not the UTC date.
           Every completeness check is grained on this.
+        data_tests: [not_null]
+
       - name: is_storage
         description: >
           True for pumped storage and batteries, which entso-e publishes once
           as generation and once as consumption.
+        data_tests: [not_null]
