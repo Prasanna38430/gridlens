@@ -101,10 +101,18 @@ containers with a task running. That budget is why every service sits behind a
 compose profile, and why Redpanda, Spark and Marquez will get profiles of their
 own rather than joining this one.
 
-Two DAGs so far. `bronze_quality` runs the expectation suite every morning at
-07:30 Paris, after the EventBridge ingest has landed, and fails loudly when an
-expectation does. `smoke` does nothing but import the project inside a task,
-which is how you tell a broken container from a broken DAG.
+Three DAGs so far. `bronze_quality` runs the expectation suite every morning
+at 07:30 Paris, after the EventBridge ingest has landed, and fails loudly when
+an expectation does. `bronze_backfill` runs at 08:00, looks for settlement days
+that never arrived in the last week, and asks the backfill Lambda for them.
+`smoke` does nothing but import the project inside a task, which is how you
+tell a broken container from a broken DAG.
+
+The backfill exists because the same repair was done by hand three times in a
+fortnight, twice after a broken scheduler payload and once after ENTSO-E
+returned 5xx for three mornings. Its `known_at` is the run's own timestamp
+rather than a clock reading, so a retry merges onto the rows the first attempt
+wrote instead of inserting the range again as a revision that never happened.
 
 Airflow does not own the ingest. EventBridge still fires that at 06:30, and
 replacing a scheduler that works with one that is a day old is how you get a
