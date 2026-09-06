@@ -40,9 +40,11 @@ value. Every one of the 89 is hydro run-of-river. The other 4,176 repeat a
 value unchanged and are an artifact of backfills run before dedupe existed on
 day 11, not of the source revising anything.
 
-Silver, the `as_of` read and the restatement endpoint are still to come, so
-answering "what did we think in March" means writing the window function
-yourself today.
+Silver answers the as_of question now. `generation_versions` carries the
+window each version was believed in as a half open interval, so reading the
+table as it stood on a past date is a range predicate rather than a window
+function over every version. `generation_current` is that table filtered to the
+newest version of each period. The restatement endpoint is still to come.
 
 The first thing the two sources disagreed about is worth stating early. On
 26 October 2025, the day the clocks went back, the French day is 25 hours long.

@@ -1,0 +1,59 @@
+version: 2
+
+# The bitemporal layer. Bronze stores a row per version and nothing else, so
+# asking what we believed on some past date means a window function over every
+# version of every period, every time. These models do that once and store the
+# answer as an interval, which turns the question into a range predicate.
+#
+# Nothing here is stateful. The intervals are derived, so a full rebuild from
+# bronze reproduces them exactly, which is what makes the day 20 restatement
+# audit meaningful rather than circular.
+
+models:
+  - name: generation_versions
+    description: >
+      Every version of every settlement period, with the window it was
+      believed in. One row in, one row out from bronze. Iceberg, partitioned
+      to match bronze because the as_of read filters on valid_time first.
+
+    columns:
+      - name: known_from
+        description: >
+          When this version became what we believed. The same value as
+          known_at in bronze, renamed because it is now one end of an interval
+          rather than a point.
+        data_tests: [not_null]
+
+      - name: known_to
+        description: >
+          When the next version replaced it, or null where this is still
+          current. The interval is half open, [known_from, known_to), so a
+          revision learned at exactly t belongs to t.
+
+      - name: is_current
+        description: Convenience for the commonest filter. True where known_to is null.
+        data_tests: [not_null]
+
+      - name: valid_time
+        description: Start of the settlement period, UTC.
+        data_tests: [not_null]
+
+      - name: quantity_mw
+        description: The measured value as believed during this interval.
+        data_tests: [not_null]
+
+  - name: generation_current
+    description: >
+      What we believe today, one row per series and settlement period. A view,
+      because it is a single predicate over a partitioned table and
+      materialising it would mean a second copy of nearly the whole dataset to
+      save a filter.
+
+    columns:
+      - name: valid_time
+        description: Start of the settlement period, UTC.
+        data_tests: [not_null]
+
+      - name: is_current
+        description: Always true here, by construction.
+        data_tests: [not_null]

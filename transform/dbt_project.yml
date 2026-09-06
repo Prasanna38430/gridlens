@@ -25,3 +25,10 @@ models:
       # no +schema here on purpose. a custom schema would have dbt create a
       # second glue database, and terraform owns databases in this repository.
       +materialized: view
+
+    silver:
+      # generation_versions is a table because every downstream read of it
+      # would otherwise redo a window function over every version in bronze.
+      # generation_current overrides this back to a view, being one predicate
+      # over that table.
+      +materialized: table

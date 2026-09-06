@@ -2,8 +2,8 @@
 
 What is in `gridlens_bronze.generation`, what each column means, and what the
 data actually looks like rather than what the schema permits. Figures measured
-on 2026-08-30 against 40,351 rows covering 26 settlement days, 2026-08-04 to
-2026-08-29, one zone.
+on 2026-09-05 against 48,658 rows covering 32 settlement days, 2026-08-04 to
+2026-09-04, one zone.
 
 Table design and the Athena limitations behind it are in `sql/README.md`. Why
 the table is append only is ADR-0004.
@@ -77,19 +77,19 @@ project's own clock.
 
 | Code | Name | Directions present | Rows | Range MW |
 |---|---|---|---|---|
-| B01 | Biomass | generation | 2,725 | 111.19 to 325.07 |
-| B04 | Gas | generation | 2,772 | 209.27 to 5,094.83 |
-| B05 | Hard coal | consumption | 2,716 | 0.69 to 6.53 |
-| B06 | Oil | generation | 2,397 | 29.41 to 1,072.05 |
-| B10 | Hydro pumped storage | both | 5,471 | 0.00 to 3,421.51 |
-| B11 | Hydro run of river | generation | 2,861 | 1,609.57 to 3,175.17 |
-| B12 | Hydro reservoir | generation | 2,772 | 110.62 to 3,073.53 |
-| B14 | Nuclear | generation | 2,771 | 27,574.21 to 39,733.29 |
-| B16 | Solar | generation | 2,022 | 0.00 to 22,324.83 |
-| B17 | Waste | generation | 2,766 | 383.91 to 470.93 |
-| B18 | Wind offshore | generation | 2,772 | 9.29 to 1,894.48 |
-| B19 | Wind onshore | generation | 2,772 | 551.59 to 12,015.96 |
-| B25 | Energy storage | both | 5,534 | 0.00 to 494.74 |
+| B01 | Biomass | generation | 3,296 | 111.19 to 325.07 |
+| B04 | Gas | generation | 3,348 | 99.73 to 5,094.83 |
+| B05 | Hard coal | consumption | 3,262 | 0.00 to 6.53 |
+| B06 | Oil | generation | 2,891 | 29.41 to 1,072.05 |
+| B10 | Hydro pumped storage | both | 6,610 | 0.00 to 3,421.51 |
+| B11 | Hydro run of river | generation | 3,437 | 1,609.57 to 3,175.17 |
+| B12 | Hydro reservoir | generation | 3,348 | 110.62 to 3,073.53 |
+| B14 | Nuclear | generation | 3,346 | 27,574.21 to 39,733.29 |
+| B16 | Solar | generation | 2,406 | 0.00 to 22,324.83 |
+| B17 | Waste | generation | 3,338 | 381.10 to 470.93 |
+| B18 | Wind offshore | generation | 3,347 | 9.29 to 1,944.92 |
+| B19 | Wind onshore | generation | 3,348 | 551.59 to 12,015.96 |
+| B25 | Energy storage | both | 6,681 | 0.00 to 494.74 |
 
 Thirteen production types, fifteen series, because two of them are
 bidirectional.
@@ -104,14 +104,22 @@ the way in and once on the way out.
 
 ### Solar has fewer rows than everything else
 
-2,022 against roughly 2,770. ENTSO-E omits solar positions at night rather than
-publishing zeros, so a solar day carries around 70 periods where nuclear
-carries 96. This is why the completeness check accepts a range of 70 to 96
-periods per series per settlement day rather than demanding a full grid.
+2,406 against roughly 3,340. ENTSO-E omits solar positions at night rather
+than publishing zeros, so a solar day carries around 70 periods where nuclear
+carries 96. That is why the completeness check accepts a range rather than
+demanding a full grid.
+
+The bound itself is now wrong. Solar was a flat 70 periods a day through
+August and has fallen to 62 as sunset moves earlier, so the lower bound of 70
+fails every morning and will fail harder until midwinter. The check is right
+and the threshold is stale. Widening it would weaken the check for every other
+series, so the fix is to compare against the interval the source published
+rather than a fixed count, which needs the gaps the contract gate computes and
+nothing stores.
 
 ### Hard coal appears only as consumption
 
-B05 has 2,716 rows, all `consumption`, between 0.69 and 6.53 MW. France has
+B05 has 3,262 rows, all `consumption`, between 0.00 and 6.53 MW. France has
 almost no coal generation left, and what ENTSO-E publishes under this type for
 FR looks like auxiliary draw rather than output. I have not confirmed that
 reading against RTE, so this records what is in the data and flags the
@@ -136,7 +144,32 @@ this project exists to serve.
 
 ## Reading the table as of a past moment
 
-There is no silver model yet, so this is the query:
+Silver answers this now. `gridlens_silver.generation_versions` carries the
+window each version was believed in, as a half open interval:
+
+```sql
+SELECT production_type, direction, valid_time, quantity_mw
+FROM gridlens_silver.generation_versions
+WHERE valid_time >= TIMESTAMP '2026-08-04 00:00:00'
+  AND valid_time <  TIMESTAMP '2026-08-05 00:00:00'
+  AND known_from <= TIMESTAMP '2026-08-25 00:00:00'
+  AND (TIMESTAMP '2026-08-25 00:00:00' < known_to OR known_to IS NULL)
+```
+
+Run against that period it returns 2,881.920 MW for run of river at 18:30.
+Ask as of 2026-08-27 and it returns 2,881.730. `generation_current` is the
+same table filtered to `known_to IS NULL`.
+
+The interval is half open on purpose. Closed on both ends returns two rows for
+any key whose version changed at exactly the instant asked about, which on this
+table is all 89 genuine revisions.
+
+The literal bound on `valid_time` is still not optional. It is what Athena
+prunes on, and the partition spec on the silver table matches bronze for that
+reason.
+
+Straight from bronze, without silver, the same question needs a window
+function over every version of every period:
 
 ```sql
 SELECT production_type, direction, valid_time, quantity_mw
@@ -153,14 +186,8 @@ FROM (
 WHERE recency = 1
 ```
 
-Drop the `known_at` bound and it reads as of now. The literal bound on
-`valid_time` is not optional: a join or window predicate alone gives Athena no
-constant to prune on and it will read the whole table.
-
-Run as written, that query returns 2,881.920 MW for run of river at 18:30.
-Remove the `known_at` bound and the same query returns 2,881.730. The first is
-what we believed on 25 August, the second is what we believe now, and both come
-out of the same table with no snapshot involved.
+Both return the same answer. The second one does the sorting again on every
+call, which is the whole reason the first one exists.
 
 ## What is not here
 
