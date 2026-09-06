@@ -26,6 +26,11 @@ models:
       # second glue database, and terraform owns databases in this repository.
       +materialized: view
 
+    gold:
+      # written to gridlens_gold verbatim, see macros/schema.sql
+      +schema: gridlens_gold
+      +materialized: table
+
     silver:
       # generation_versions is a table because every downstream read of it
       # would otherwise redo a window function over every version in bronze.

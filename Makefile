@@ -75,14 +75,23 @@ password: ## print the generated airflow admin password
 #
 # --profiles-dir rather than DBT_PROFILES_DIR, because make on windows shells
 # out to cmd.exe and an inline environment variable is not a thing there.
-DBT = transform/.venv/Scripts/dbt --project-dir transform --profiles-dir transform
+# the flags go after the subcommand, not before it. dbt rejects
+# `dbt --project-dir x build` and accepts `dbt build --project-dir x`.
+DBT = transform/.venv/Scripts/dbt
+DBT_ARGS = --project-dir transform --profiles-dir transform
 
 dbt-install: ## create transform/.venv from transform/requirements.txt
 	uv venv transform/.venv
 	uv pip install --python transform/.venv/Scripts/python.exe -r transform/requirements.txt
 
+# The sha goes into gold.run_manifest, so a mart row can be traced back to the
+# code that built it. Exported by make rather than set in the recipe, because
+# `set VAR=x &&` is cmd.exe syntax and `VAR=x cmd` is sh syntax, and which one
+# runs here depends on whether sh is on PATH.
+export GRIDLENS_GIT_SHA := $(shell git rev-parse HEAD)
+
 dbt: ## run the dbt models and their tests
-	$(DBT) build
+	$(DBT) build $(DBT_ARGS)
 
 dbt-debug: ## check the dbt connection to athena
-	$(DBT) debug
+	$(DBT) debug $(DBT_ARGS)

@@ -1,0 +1,99 @@
+version: 2
+
+# Settlement grade, meaning energy rather than instantaneous power, and storage
+# netted rather than counted twice.
+#
+# What is not here: carbon intensity, price signal and imbalance. Each needs a
+# source that is not ingested yet, ADEME emission factors and day ahead prices,
+# and a mart built on numbers nobody published would be worse than no mart.
+
+models:
+  - name: period_generation_net
+    description: >
+      Net generation per production type per settlement period, signed.
+      Consumption is negated here, once, so that anything summing this cannot
+      double count storage.
+
+    columns:
+      - name: zone
+        data_tests: [not_null]
+      - name: valid_time
+        description: Start of the settlement period, UTC.
+        data_tests: [not_null]
+      - name: settlement_day
+        description: The Paris date, which is not the UTC date.
+        data_tests: [not_null]
+      - name: production_type
+        data_tests: [not_null]
+      - name: net_mw
+        description: >
+          Generation minus consumption for this type in this period. Negative
+          where storage absorbed more than it released.
+        data_tests: [not_null]
+
+  - name: daily_generation_mix
+    description: >
+      Energy per production type per settlement day, in MWh, with each type's
+      share of gross generation.
+
+      The signed net logic is corroborated by the data rather than only by
+      review: batteries come out at 36,823 MWh released against 45,769 MWh
+      absorbed, a round trip efficiency of 80.5 percent, which is what a
+      battery fleet should do. Pumped storage nets positive, because French
+      plants of that type take natural inflow and a reservoir drawn down over
+      a month is not constrained to net zero.
+
+    columns:
+      - name: zone
+        data_tests: [not_null]
+      - name: settlement_day
+        data_tests: [not_null]
+      - name: production_type
+        data_tests: [not_null]
+      - name: energy_mwh
+        description: >
+          Net MWh over the settlement day. Power times period length: reporting
+          MW summed over a day is the usual way to publish a number that is
+          wrong by a factor of four at 15 minute resolution.
+        data_tests: [not_null]
+      - name: gross_mwh
+        description: Sum of the types that net positive over the day.
+        data_tests: [not_null]
+      - name: share_of_gross
+        description: >
+          Null for a type that nets negative over the day, because a share of a
+          total it did not contribute to is not meaningful.
+
+  - name: run_manifest
+    description: >
+      One row per dbt run, recording what it read and what built it. Append
+      only, like bronze: a manifest that could be updated would be evidence of
+      nothing.
+
+      The iceberg snapshot id is the stronger half of the record. Bronze is
+      append only, so a snapshot id names an exact set of rows forever, where a
+      timestamp only names whatever happened to be committed by then.
+
+    columns:
+      - name: dbt_invocation_id
+        description: Unique per dbt run. One manifest row per invocation.
+        data_tests: [not_null, unique]
+      - name: run_started_at
+        data_tests: [not_null]
+      - name: git_sha
+        description: >
+          The commit that built this run, exported by `make dbt`. A run that
+          does not set it records unknown rather than pretending to know, and
+          there are two such rows from before the make target passed it.
+        data_tests: [not_null]
+      - name: factor_version
+        description: >
+          none until ADEME emission factors are ingested. Present now so the
+          shape of the record is right and the gap is visible.
+        data_tests: [not_null]
+      - name: bronze_snapshot_id
+        description: The iceberg snapshot of bronze this run read.
+        data_tests: [not_null]
+      - name: bronze_committed_at
+        description: When that snapshot was committed.
+        data_tests: [not_null]

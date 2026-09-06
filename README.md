@@ -40,6 +40,12 @@ value. Every one of the 89 is hydro run-of-river. The other 4,176 repeat a
 value unchanged and are an artifact of backfills run before dedupe existed on
 day 11, not of the source revising anything.
 
+Gold holds two settlement grade marts, `period_generation_net` and
+`daily_generation_mix`, plus a `run_manifest` that records the git commit and
+the Iceberg snapshot id every dbt run read. Carbon intensity, price signal and
+imbalance are not there: each needs a source that is not ingested yet, and a
+mart built on numbers nobody published would be worse than no mart.
+
 Silver answers the as_of question now. `generation_versions` carries the
 window each version was believed in as a half open interval, so reading the
 table as it stood on a past date is a range predicate rather than a window
