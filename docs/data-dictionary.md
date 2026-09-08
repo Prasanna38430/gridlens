@@ -79,7 +79,7 @@ project's own clock.
 |---|---|---|---|---|
 | B01 | Biomass | generation | 3,296 | 111.19 to 325.07 |
 | B04 | Gas | generation | 3,348 | 99.73 to 5,094.83 |
-| B05 | Hard coal | consumption | 3,262 | 0.00 to 6.53 |
+| B05 | Hard coal | consumption, and one zero | 3,262 | 0.69 to 6.53 |
 | B06 | Oil | generation | 2,891 | 29.41 to 1,072.05 |
 | B10 | Hydro pumped storage | both | 6,610 | 0.00 to 3,421.51 |
 | B11 | Hydro run of river | generation | 3,437 | 1,609.57 to 3,175.17 |
@@ -117,13 +117,23 @@ series, so the fix is to compare against the interval the source published
 rather than a fixed count, which needs the gaps the contract gate computes and
 nothing stores.
 
-### Hard coal appears only as consumption
+### Hard coal is consumption, apart from a single zero
 
-B05 has 3,262 rows, all `consumption`, between 0.00 and 6.53 MW. France has
-almost no coal generation left, and what ENTSO-E publishes under this type for
-FR looks like auxiliary draw rather than output. I have not confirmed that
-reading against RTE, so this records what is in the data and flags the
-interpretation as unverified.
+B05 is 3,448 `consumption` rows between 0.69 and 6.53 MW, and exactly one
+`generation` row, at 2026-09-02 14:00, whose value is 0.000 MW.
+
+France has almost no coal generation left, and what ENTSO-E publishes under
+this type for FR looks like auxiliary draw rather than output. The lone
+generation position does not contradict that, because it reports zero: the
+source emitted the direction, not any output.
+
+Two corrections to an earlier version of this section, both mine. It said
+"all consumption", which the single row disproves. And it gave the range as
+0.00 to 6.53, where the 0.00 was that generation row leaking into an aggregate
+grouped by production type but not by direction. Grouping by type alone is the
+same mistake the `is_storage` column exists to prevent elsewhere.
+
+The auxiliary draw reading is still unverified against RTE.
 
 ## Partitioning
 
