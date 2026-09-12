@@ -14,6 +14,27 @@ import boto3
 TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 
 
+def strip_leading_comments(sql: str) -> str:
+    """Drop comment and blank lines before the statement.
+
+    Athena routes its Iceberg extensions on the first keyword it sees, so a
+    header comment in front of OPTIMIZE or VACUUM gets the statement parsed as
+    ordinary SQL and rejected with "mismatched input". Every other statement
+    tolerates the comment, which is why this went unnoticed: the maintenance
+    files were verified by running the statements, not the files.
+    """
+    lines = sql.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("--"):
+            start = index
+            break
+    else:
+        start = len(lines)
+    return "\n".join(lines[start:]).strip()
+
+
 def run_statement(
     client: Any, sql: str, workgroup: str, database: str
 ) -> dict[str, Any]:
@@ -46,7 +67,7 @@ def main() -> int:
     for path in args.files:
         # one statement per file. athena takes one per call and splitting on
         # semicolons breaks the moment a string literal contains one.
-        sql = path.read_text(encoding="utf-8").strip().rstrip(";")
+        sql = strip_leading_comments(path.read_text(encoding="utf-8")).rstrip(";")
         execution = run_statement(client, sql, args.workgroup, args.database)
         status = execution["Status"]
         stats = execution.get("Statistics", {})
