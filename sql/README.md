@@ -104,16 +104,29 @@ does not repeat that. It checks what a single batch cannot see:
   failure here means the writer is broken rather than the data
 - periods older than now, and values known before the period they describe
 - freshness, measured as hours since the newest `known_at`
-- periods per settlement day, per series
+- whether each settlement day holds every period the calendar says it has,
+  and whether any whole series went missing
 
 Completeness is grained on the **settlement day**, not the UTC date. A Paris
 day runs 22:00Z to 22:00Z, so grouping on the UTC date splits every fetch
 across two dates and reports 8 periods on one and 88 on the next. The first
 version of this check did exactly that and looked like a catastrophe.
 
-The bounds are measured rather than assumed. A complete day sits between 70
-and 96 periods: 96 is a full day at PT15M, and 70 is solar, which has no
-positions at night because ENTSO-E omits them rather than sending zeros.
+It is also grained on the day rather than the series, and the second version
+got that wrong. It asserted every series held between 70 and 96 periods, with
+70 measured on August solar. But ENTSO-E omits solar positions at night instead
+of sending zeros, so solar's count tracks daylight, and from September the
+floor failed every morning on days that were complete. Lowering it for winter
+would have let nuclear fall to 40 unnoticed.
+
+So a day now passes when its distinct periods across all series equal the day's
+length, 96 normally and 92 or 100 at a clock change, taken from `timeaxis`
+rather than recomputed in SQL. At least fifteen series must be present, as a
+floor because a known type occasionally appears in a direction it normally
+never uses. No series may claim more periods than the day has.
+
+Changing the grain found a short day the old floor had hidden: 2026-08-29 held
+84 periods, which cleared 70. It was backfilled to 96.
 
 ## Table maintenance
 

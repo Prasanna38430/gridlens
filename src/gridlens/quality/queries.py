@@ -25,14 +25,25 @@ SELECT
      FROM {database}.generation) AS hours_since_last_learned
 """
 
-# One row per series per settlement day. The grain matters: a Paris day runs
-# 22:00Z to 22:00Z, so grouping on the UTC date splits every fetch across two
-# dates and reports 8 periods on one and 88 on the other. Completeness belongs
-# on the day we actually asked for.
+# One row per settlement day, not per series per day.
 #
-# The newest day is excluded because it is always in flight. Everything older
-# is fair game, and a short day there is a real finding rather than a timing
-# artifact.
+# The grain is the point. A series is allowed to be sparse, because entso-e
+# omits positions it has no value for rather than sending zeros, and solar does
+# that every night. Its count tracks daylight: a flat 70 periods through August
+# and 62 by September. Any fixed floor per series is a number measured in one
+# season and wrong in the next, and a floor low enough for winter solar would
+# let nuclear drop from 96 to 40 unnoticed.
+#
+# A short day is a different thing. When a fetch lands before the source has
+# finished publishing, every series is short and the day as a whole is missing
+# periods. So the question asked here is whether the day, across all of its
+# series, has every period the calendar says it has. That is a property of the
+# calendar rather than the weather, and it needs no recalibration.
+#
+# Grouped on the Paris date because a settlement day runs 22:00Z to 22:00Z, so
+# the UTC date splits every fetch across two dates.
+#
+# The newest day is excluded because it is always in flight.
 COMPLETENESS = """
 WITH local AS (
     SELECT
@@ -41,22 +52,44 @@ WITH local AS (
         production_type,
         direction,
         valid_time,
-        known_at,
         quantity_mw
     FROM {database}.generation
 ),
 newest AS (
     SELECT max(settlement_day) AS latest FROM local
+),
+per_series AS (
+    SELECT zone, settlement_day, production_type, direction,
+           count(DISTINCT valid_time) AS periods
+    FROM local
+    GROUP BY 1, 2, 3, 4
+),
+per_day AS (
+    SELECT
+        zone,
+        settlement_day,
+        count(DISTINCT valid_time) AS periods,
+        count(DISTINCT production_type || '/' || direction) AS series,
+        CAST(max(quantity_mw) AS double) AS max_mw
+    FROM local
+    GROUP BY 1, 2
+),
+densest AS (
+    SELECT zone, settlement_day, max(periods) AS densest_series
+    FROM per_series
+    GROUP BY 1, 2
 )
 SELECT
-    zone,
-    settlement_day,
-    production_type,
-    direction,
-    count(DISTINCT valid_time) AS periods,
-    count(DISTINCT known_at) AS versions,
-    CAST(max(quantity_mw) AS double) AS max_mw
-FROM local, newest
-WHERE settlement_day < newest.latest
-GROUP BY 1, 2, 3, 4
+    p.zone,
+    p.settlement_day,
+    p.periods,
+    p.series,
+    d.densest_series,
+    p.max_mw
+FROM per_day p
+JOIN densest d
+    ON d.zone = p.zone
+   AND d.settlement_day = p.settlement_day
+CROSS JOIN newest
+WHERE p.settlement_day < newest.latest
 """

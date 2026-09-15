@@ -105,17 +105,29 @@ the way in and once on the way out.
 ### Solar has fewer rows than everything else
 
 2,406 against roughly 3,340. ENTSO-E omits solar positions at night rather
-than publishing zeros, so a solar day carries around 70 periods where nuclear
-carries 96. That is why the completeness check accepts a range rather than
-demanding a full grid.
+than publishing zeros, so the number of periods a solar series carries tracks
+daylight: a flat 70 a day through August, 62 by mid September, and lower still
+towards midwinter.
 
-The bound itself is now wrong. Solar was a flat 70 periods a day through
-August and has fallen to 62 as sunset moves earlier, so the lower bound of 70
-fails every morning and will fail harder until midwinter. The check is right
-and the threshold is stale. Widening it would weaken the check for every other
-series, so the fix is to compare against the interval the source published
-rather than a fixed count, which needs the gaps the contract gate computes and
-nothing stores.
+That is why completeness is not checked per series. The first version of the
+check did that, with a floor of 70 measured in August, and from the start of
+September it failed every morning on days that were entirely complete. Any
+fixed floor per series is a number measured in one season and wrong in the
+next, and a floor low enough for winter solar would let nuclear fall from 96 to
+40 without a word.
+
+Completeness is checked per settlement day instead: does the day, across all
+of its series, hold every period the calendar says it has, 96 normally and 92
+or 100 at a clock change. Sparsity in one series is a property of the source. A
+short day is a property of the fetch, which is the thing this pipeline controls.
+
+The day grain found something the per series floor had hidden. 2026-08-29 was
+fetched before ENTSO-E had finished publishing and held 84 periods, which
+passed a floor of 70. It has since been backfilled to 96.
+
+What this still cannot tell you is whether, inside the interval the source
+declared, every position it should have published is present. That needs the
+missing positions the contract gate computes and nothing yet stores.
 
 ### Hard coal is consumption, apart from a single zero
 
