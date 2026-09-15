@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 import great_expectations as gx
 import pandas as pd
 
+from gridlens import timeaxis
 from gridlens.quality import queries
 
-# A settlement day is 96 quarter hours, 100 in october and 92 in march. A
-# series is allowed to fall short, because entsoe omits positions it has no
-# value for and solar does that every night: 70 is the lowest a complete day
-# has produced. Below that the fetch itself was short.
-MIN_PERIODS_PER_DAY = 70
-MAX_PERIODS_PER_DAY = 100
+PARIS = ZoneInfo("Europe/Paris")
+QUARTER_HOUR = timedelta(minutes=15)
+
+# Fifteen series make a French day: thirteen production types, two of them in
+# both directions. It is a floor rather than an exact count, because a known
+# type does occasionally turn up in a direction it normally never uses. Hard
+# coal published a single zero as generation on 2026-09-02, and offshore wind
+# published 32 periods of consumption on 2026-09-14. Neither is a defect.
+MIN_SERIES_PER_DAY = 15
 
 # France peaks near 40 GW on a single production type. 150 GW is the same unit
 # error detector the contract applies per row, restated at table level.
@@ -119,24 +125,43 @@ def invariants(frame: pd.DataFrame) -> Any:
     )
 
 
+def expected_periods(settlement_day: str) -> int:
+    """Quarter hours in a Paris settlement day: 96, or 92 and 100 at a clock change."""
+    start, end = timeaxis.settlement_day(date.fromisoformat(settlement_day), PARIS)
+    return timeaxis.period_count(start, end, QUARTER_HOUR)
+
+
 def completeness(frame: pd.DataFrame) -> Any:
+    checked = _numeric(frame, ["periods", "series", "densest_series", "max_mw"])
+    # day length comes from timeaxis rather than a second clock change
+    # calculation in sql, so there is one place that knows march is 92.
+    checked["expected_periods"] = [
+        expected_periods(day) for day in checked["settlement_day"]
+    ]
+
+    # Direction and production type are no longer checked here. They are
+    # column contracts, and dbt's accepted_values tests on stg_generation
+    # already assert both, which is where column contracts belong.
     return _validate(
-        _numeric(frame, ["periods", "versions", "max_mw"]),
+        checked,
         "bronze-completeness",
         [
+            # the fetch covered the whole day
+            gx.expectations.ExpectColumnPairValuesToBeEqual(
+                column_A="periods", column_B="expected_periods"
+            ),
+            # no series claims more periods than the day has
+            gx.expectations.ExpectColumnPairValuesAToBeGreaterThanB(
+                column_A="expected_periods", column_B="densest_series", or_equal=True
+            ),
+            # no whole series went missing
             gx.expectations.ExpectColumnValuesToBeBetween(
-                column="periods",
-                min_value=MIN_PERIODS_PER_DAY,
-                max_value=MAX_PERIODS_PER_DAY,
+                column="series", min_value=MIN_SERIES_PER_DAY
             ),
             gx.expectations.ExpectColumnValuesToBeBetween(
                 column="max_mw", min_value=0, max_value=MAX_QUANTITY_MW
             ),
             gx.expectations.ExpectColumnValuesToNotBeNull(column="zone"),
-            gx.expectations.ExpectColumnValuesToNotBeNull(column="production_type"),
-            gx.expectations.ExpectColumnDistinctValuesToBeInSet(
-                column="direction", value_set=["generation", "consumption"]
-            ),
         ],
     )
 
@@ -164,7 +189,9 @@ def run(
         checked += len(result.results)
         for item in result.results:
             if not item.success:
-                column = item.expectation_config.kwargs.get("column")
+                kwargs = item.expectation_config.kwargs
+                # pair expectations name column_A rather than column
+                column = kwargs.get("column") or kwargs.get("column_A")
                 observed = item.result.get("partial_unexpected_list")
                 failures.append(f"{name}.{column}: {observed}")
 
