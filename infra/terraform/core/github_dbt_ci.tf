@@ -81,6 +81,10 @@ data "aws_iam_policy_document" "github_dbt" {
       "glue:GetTables",
       "glue:GetPartition",
       "glue:GetPartitions",
+      # the adapter asks for table versions on the catalog when it replaces a
+      # relation. found by a ci run failing on it, and added on its own rather
+      # than by widening the statement.
+      "glue:GetTableVersions",
     ]
     resources = [
       local.glue_catalog_arn,

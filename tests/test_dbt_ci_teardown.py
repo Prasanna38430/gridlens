@@ -122,9 +122,12 @@ def test_tables_and_views_are_dropped_through_athena_then_the_schema():
     athena = FakeAthena()
     result = teardown(glue, athena, SCHEMA, sleep=lambda _: None)
 
+    # the quoting differs by relation and this is the regression: athena
+    # rejects a backticked DROP VIEW outright, and the first version of this
+    # test asserted backticks for both, so it could not have caught it
     assert athena.sql == [
         f"DROP TABLE IF EXISTS `{SCHEMA}`.`generation_versions`",
-        f"DROP VIEW IF EXISTS `{SCHEMA}`.`generation_current`",
+        f'DROP VIEW IF EXISTS "{SCHEMA}"."generation_current"',
     ]
     assert glue.deleted == [SCHEMA]
     assert result["dropped"] == ["generation_versions", "generation_current"]
@@ -160,3 +163,17 @@ def test_the_sweep_is_confined_to_the_schema_prefix():
     )
     assert s3.prefix == f"ci/{SCHEMA}/"
     assert s3.deleted == [f"ci/{SCHEMA}/t/uuid/data.parquet"]
+
+
+def test_a_view_is_never_dropped_with_backticks():
+    # athena parses DROP VIEW on the trino engine and refuses the query before
+    # it starts: "Queries of this type are not supported"
+    athena = FakeAthena()
+    teardown(
+        FakeGlue([{"Name": "v", "TableType": "VIRTUAL_VIEW"}]),
+        athena,
+        SCHEMA,
+        sleep=lambda _: None,
+    )
+    assert "`" not in athena.sql[0]
+    assert athena.sql[0] == f'DROP VIEW IF EXISTS "{SCHEMA}"."v"'

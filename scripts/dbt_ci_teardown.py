@@ -125,17 +125,21 @@ def teardown(
     if found is not None:
         for name, is_view in found:
             check_schema(database)
-            # through athena rather than glue.delete_table. dropping an iceberg
-            # table in athena deletes its data, where deleting the catalog
-            # entry alone leaves every file behind with nothing pointing at it.
-            kind = "VIEW" if is_view else "TABLE"
-            _run(
-                engine,
-                f"DROP {kind} IF EXISTS `{database}`.`{name}`",
-                workgroup,
-                sleep,
-                poll_seconds,
-            )
+            # Through athena rather than glue.delete_table. Dropping an
+            # iceberg table in athena deletes its data, where deleting the
+            # catalog entry alone leaves every file behind with nothing
+            # pointing at it.
+            #
+            # The quoting differs by relation, which is not cosmetic. DROP
+            # TABLE is hive ddl and takes backticks. DROP VIEW is parsed by the
+            # trino engine, which quotes with double quotes and rejects a
+            # backticked name before the query even starts, with "Queries of
+            # this type are not supported".
+            if is_view:
+                sql = f'DROP VIEW IF EXISTS "{database}"."{name}"'
+            else:
+                sql = f"DROP TABLE IF EXISTS `{database}`.`{name}`"
+            _run(engine, sql, workgroup, sleep, poll_seconds)
             dropped.append(name)
         catalog.delete_database(Name=database)
 
