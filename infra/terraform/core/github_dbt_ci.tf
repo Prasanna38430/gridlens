@@ -119,6 +119,11 @@ data "aws_iam_policy_document" "github_dbt" {
       local.glue_catalog_arn,
       "arn:aws:glue:${var.region}:${local.suffix}:database/${local.ci_schema_prefix}*",
       "arn:aws:glue:${var.region}:${local.suffix}:table/${local.ci_schema_prefix}*/*",
+      # DeleteDatabase removes everything the database contains, so glue checks
+      # the child resources too. Without this it fails on
+      # userDefinedFunction/<schema>/* even though the schema has no functions
+      # in it, which is how the first teardown left its schema behind.
+      "arn:aws:glue:${var.region}:${local.suffix}:userDefinedFunction/${local.ci_schema_prefix}*/*",
     ]
   }
 
