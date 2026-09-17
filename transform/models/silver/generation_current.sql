@@ -1,5 +1,3 @@
--- temporary: forces state:modified to select this model so the ci build
--- path is actually exercised. reverted in the next commit.
 {{ config(materialized="view") }}
 
 -- What we believe today. One row per series and settlement period.
