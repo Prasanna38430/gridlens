@@ -22,3 +22,7 @@ output "athena_workgroup" {
 output "lake_warehouse" {
   value = "s3://${aws_s3_bucket.data["lake"].id}/bronze/"
 }
+
+output "ci_dbt_role_arn" {
+  value = aws_iam_role.github_dbt.arn
+}

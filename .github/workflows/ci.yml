@@ -119,3 +119,80 @@ jobs:
 
           terraform -chdir=infra/terraform/core init -input=false             -backend-config="bucket=gridlens-tfstate-$account"
           terraform -chdir=infra/terraform/core plan -input=false -lock=false
+
+  dbt:
+    # The models a pull request changes, built and tested in a schema of their
+    # own, with every unchanged parent read from production through --defer.
+    # main is parsed in a worktree for the comparison, so no state is stored.
+    #
+    # Skipped when the role variable is unset rather than failing. It is not a
+    # security boundary: a pull request brings its own copy of this file. The
+    # trust policy on gridlens-ci-dbt is the boundary, see github_dbt_ci.tf.
+    if: github.event_name == 'pull_request' && vars.AWS_CI_DBT_ROLE != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      DBT_CI_SCHEMA: gridlens_ci_pr_${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # its own environment, for the reason in transform/requirements.txt
+      - name: install dbt
+        run: |
+          uv venv transform/.venv
+          uv pip install --python transform/.venv/bin/python -r transform/requirements.txt
+
+      - name: parse main for the comparison
+        run: |
+          git worktree add ../main origin/main
+          transform/.venv/bin/dbt parse \
+            --project-dir ../main/transform --profiles-dir ../main/transform \
+            --target-path "$GITHUB_WORKSPACE/main-state"
+
+      # the day 19 schema leak, caught by a check rather than by a code review.
+      # every model under the ci target has to resolve to this pull request's
+      # schema, or the build would write into production.
+      - name: nothing resolves outside the ci schema
+        run: |
+          transform/.venv/bin/dbt ls \
+            --project-dir transform --profiles-dir transform --target ci \
+            --resource-type model --output json --output-keys name schema \
+            | grep '^{' > resolved.jsonl
+          python3 - <<'CHECK'
+          import json, os, sys
+          want = os.environ["DBT_CI_SCHEMA"]
+          bad = [r for r in map(json.loads, open("resolved.jsonl")) if r["schema"] != want]
+          if bad:
+              sys.exit(f"models resolving outside {want}: {bad}")
+          print(f"all models resolve to {want}")
+          CHECK
+
+      - name: assume the dbt role
+        id: aws
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CI_DBT_ROLE }}
+          aws-region: eu-west-3
+
+      - name: build and test what changed
+        run: |
+          transform/.venv/bin/dbt build \
+            --project-dir transform --profiles-dir transform --target ci \
+            --select state:modified+ --defer --state "$GITHUB_WORKSPACE/main-state"
+
+      # always, so a failed build still cleans up, but only once credentials
+      # exist, or this step fails for a reason that hides the real one
+      - name: drop the ci schema
+        if: always() && steps.aws.outcome == 'success'
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          uv run python scripts/dbt_ci_teardown.py "$DBT_CI_SCHEMA" \
+            --data-prefix "s3://gridlens-lake-$account/ci/"
