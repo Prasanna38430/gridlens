@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from dbt_ci_teardown import (  # noqa: E402
+from dbt_teardown import (  # noqa: E402
     DropFailed,
     RefusedSchema,
     check_schema,

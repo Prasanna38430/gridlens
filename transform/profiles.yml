@@ -23,7 +23,7 @@ gridlens:
       threads: 4
 
     # A pull request's own schema, created by the build and dropped afterwards
-    # by scripts/dbt_ci_teardown.py.
+    # by scripts/dbt_teardown.py.
     #
     # No aws_profile_name. In github actions the credentials arrive as
     # environment variables from the oidc role, and naming a profile that does
