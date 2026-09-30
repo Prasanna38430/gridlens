@@ -1,6 +1,7 @@
 -- Every positive contribution divided by the same total has to add to one.
--- A tolerance because these are decimals divided in the warehouse, not
--- because the arithmetic is allowed to be approximately right.
+-- A tolerance because each share is a double, and adding a dozen correctly
+-- rounded doubles need not land on exactly one. The shares themselves are
+-- deterministic, being one division of two exact decimals each.
 
 select
     zone,
