@@ -2,9 +2,12 @@
 # account id is already in sql/bronze/generation.sql, so nothing in this file
 # is worse than what the repository already publishes.
 gridlens:
-  target: dev
+  target: prod
   outputs:
-    dev:
+    # Production. This was called dev until day 19, and a schema override that
+    # wrote to production under every target went unnoticed partly because
+    # nothing here admitted that dev was production.
+    prod:
       type: athena
       region_name: eu-west-3
       database: awsdatacatalog
@@ -17,4 +20,25 @@ gridlens:
       # "you need to have an unique table location".
       s3_data_naming: schema_table_unique
       aws_profile_name: "{{ env_var('AWS_PROFILE', 'gridlens') }}"
+      threads: 4
+
+    # A pull request's own schema, created by the build and dropped afterwards
+    # by scripts/dbt_ci_teardown.py.
+    #
+    # No aws_profile_name. In github actions the credentials arrive as
+    # environment variables from the oidc role, and naming a profile that does
+    # not exist there fails the connection outright. Locally the default chain
+    # still picks up AWS_PROFILE.
+    #
+    # The default schema keeps a local ci run inside the gridlens_ci_ prefix,
+    # which is the only prefix the ci role may create or drop.
+    ci:
+      type: athena
+      region_name: eu-west-3
+      database: awsdatacatalog
+      schema: "{{ env_var('DBT_CI_SCHEMA', 'gridlens_ci_local') }}"
+      work_group: gridlens
+      s3_staging_dir: s3://gridlens-athena-054129814335/dbt/
+      s3_data_dir: s3://gridlens-lake-054129814335/ci/
+      s3_data_naming: schema_table_unique
       threads: 4
