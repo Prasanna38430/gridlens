@@ -29,3 +29,24 @@ select
     production_type in ('B10', 'B25') as is_storage
 
 from {{ source('bronze', 'generation') }}
+
+{#-
+    A restatement: bronze as it stood at one past instant, over one window of
+    settlement periods. The nightly audit rebuilds last month this way and
+    compares the result with production, row for row.
+
+    known_at rather than iceberg time travel, because known_at is the clock
+    this project promises, and snapshots are expired after a week. The audit
+    checks separately that the two clocks agree.
+
+    Refused on the production target. A restated build there would replace
+    production gold with one month of it.
+#}
+{%- if var('restate_as_of', none) is not none %}
+    {%- if target.name == 'prod' %}
+        {{ exceptions.raise_compiler_error("restate_as_of is never allowed on the prod target") }}
+    {%- endif %}
+where known_at <= timestamp '{{ var("restate_as_of") }}'
+  and valid_time >= timestamp '{{ var("restate_from") }}'
+  and valid_time < timestamp '{{ var("restate_to") }}'
+{%- endif %}
