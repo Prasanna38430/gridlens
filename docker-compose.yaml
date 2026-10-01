@@ -15,6 +15,10 @@ x-airflow-common: &airflow-common
   build:
     context: ./docker
     dockerfile: airflow.Dockerfile
+    # dbt's pins live with the dbt project. The image reads them from there
+    # rather than keeping a second copy that could drift from the host's.
+    additional_contexts:
+      transform: ./transform
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -34,6 +38,12 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./src:/opt/airflow/project/src:ro
+    # read write, unlike src, since dbt writes into its project by default. The
+    # audit points target/ and logs/ at /tmp instead: sharing target/ with dbt
+    # on the windows host crashed the first run, because the parse cache keys
+    # files by path and windows writes them with backslashes.
+    - ./transform:/opt/airflow/project/transform
+    - ./scripts:/opt/airflow/project/scripts:ro
     - ${HOME}/.aws:/home/airflow/.aws:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
