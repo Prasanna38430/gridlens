@@ -104,7 +104,12 @@ services:
     # local executor forks task processes in here, and the quality task imports
     # pandas and great expectations. 640m was enough for the smoke dag and is
     # not enough for this one.
-    mem_limit: 1024m
+    #
+    # Measured on 2026-10-01: about 580 MiB idle, 800 running the quality
+    # suite, 891 running dbt for the restatement audit. The two are scheduled
+    # apart, but unpausing after a gap queues both at once, and together they
+    # would pass 1024m and get the container killed.
+    mem_limit: 1536m
 
   airflow-dag-processor:
     <<: *airflow-common
