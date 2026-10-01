@@ -104,17 +104,33 @@ password Airflow generates on first start. `make password` prints it. `make
 down` stops everything and keeps the database volume, `make logs` follows the
 scheduler.
 
-Measured on an 8 GB machine with WSL2 capped at 2 GB: 916 MiB across all four
-containers with a task running. That budget is why every service sits behind a
+Measured on an 8 GB machine with WSL2 capped at 2 GB: 1,238 MiB across all
+four containers at the worst moment so far, with the quality suite running.
+dbt in the restatement audit takes the scheduler container alone to 891 MiB.
+That budget is why every service sits behind a
 compose profile, and why Redpanda, Spark and Marquez will get profiles of their
 own rather than joining this one.
 
-Three DAGs so far. `bronze_quality` runs the expectation suite every morning
+Four DAGs so far. `bronze_quality` runs the expectation suite every morning
 at 07:30 Paris, after the EventBridge ingest has landed, and fails loudly when
 an expectation does. `bronze_backfill` runs at 08:00, looks for settlement days
 that never arrived in the last week, and asks the backfill Lambda for them.
 `smoke` does nothing but import the project inside a task, which is how you
 tell a broken container from a broken DAG.
+
+`restatement_audit` runs at 09:00. It rebuilds the previous calendar month
+from bronze into a throwaway schema, bounded at what production had learned
+when `make dbt` last ran, and compares every silver and gold table with
+production row for row. The bound is read from `run_manifest`, and before
+anything is rebuilt the DAG checks that bronze filtered on `known_at` holds
+exactly the rows of the snapshot production read. The schema is dropped
+whatever the outcome.
+
+The first audit, run by hand, failed. 299 of 364 August rows differed between
+two builds of identical input, because daily energy was summed in floating
+point and the last digits depended on the order Athena's workers added it up.
+Gold now sums in exact decimals. September's audit matched on 39,773 silver
+rows, 34,297 period rows and 377 daily rows, with zero differences either way.
 
 The backfill exists because the same repair was done by hand three times in a
 fortnight, twice after a broken scheduler payload and once after ENTSO-E
@@ -131,6 +147,9 @@ because this repository sits inside OneDrive and pointing a process that writes
 log files every few seconds at a syncing folder invites file locks. And `src`
 is bind mounted read only onto `PYTHONPATH` rather than installed, so a DAG
 imports the same code the tests run against with no rebuild step.
+`transform` is mounted read write, because dbt writes `target/` and `logs/`
+inside the project, and dbt has a virtualenv of its own in the image rather
+than sharing Airflow's packages.
 
 ## Infrastructure
 
@@ -157,8 +176,15 @@ position: every commit rewrites it with the full snapshot history, Athena
 rejects every Iceberg property that would prune it, and it is currently 779 KB
 of bookkeeping on 239 KB of data.
 
-The quality suite is not scheduled. It exists, it passes, and running it is a
-manual step until Airflow lands.
+Production gold is rebuilt by hand with `make dbt`, not on a schedule. The
+restatement audit compares against whatever that last build produced, so a
+model change merged without a rebuild fails the audit until someone runs it.
+The run manifest's git sha is in the audit's log to tell the two apart.
+
+The audit's clock check needs the Iceberg snapshot production read to still
+exist. Nothing expires bronze snapshots today. Once something does, a
+production build older than the retention window has to be rebuilt before the
+audit can pass.
 
 ## What broke
 
