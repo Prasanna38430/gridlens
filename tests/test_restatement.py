@@ -165,6 +165,29 @@ def test_restate_runs_dbt_on_the_audit_target_with_the_bound():
         "restate_to": "2026-08-31 22:00:00.000000",
     }
     assert calls[0]["env"]["DBT_AUDIT_SCHEMA"] == "gridlens_audit_20260930"
+    # left alone unless asked, so a run on the host behaves like make dbt
+    assert "--target-path" not in command
+
+
+def test_the_container_keeps_its_dbt_artifacts_out_of_the_project():
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **kwargs: Any) -> FakeResult:
+        calls.append(command)
+        return FakeResult(0)
+
+    restate(
+        "dbt",
+        "transform",
+        "gridlens_audit_20260930",
+        AUGUST,
+        RUN,
+        artifacts_dir="/tmp/dbt-audit",
+        runner=runner,
+    )
+    command = calls[0]
+    assert command[command.index("--target-path") + 1] == "/tmp/dbt-audit/target"
+    assert command[command.index("--log-path") + 1] == "/tmp/dbt-audit/logs"
 
 
 def test_a_failed_dbt_run_fails_the_restatement():

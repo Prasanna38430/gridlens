@@ -270,9 +270,17 @@ def restate(
     window: Window,
     run: ProductionRun,
     *,
+    artifacts_dir: str | None = None,
     runner: Any = subprocess.run,
 ) -> str:
-    """Build silver and gold into the audit schema, bounded at the run's bound."""
+    """Build silver and gold into the audit schema, bounded at the run's bound.
+
+    artifacts_dir moves dbt's target/ and logs/ out of the project. The
+    container needs it: the project is the host's, and a parse cache written by
+    dbt on windows keys files by backslash paths, which crashed dbt on linux
+    with a KeyError on the first run. Writing its own cache there would break
+    the host's next build the same way.
+    """
     variables = {
         "restate_as_of": sql_timestamp(run.learned_up_to),
         "restate_from": sql_timestamp(window.start),
@@ -292,6 +300,13 @@ def restate(
         "--vars",
         json.dumps(variables),
     ]
+    if artifacts_dir:
+        command += [
+            "--target-path",
+            f"{artifacts_dir}/target",
+            "--log-path",
+            f"{artifacts_dir}/logs",
+        ]
     result = runner(
         command,
         env={**os.environ, "DBT_AUDIT_SCHEMA": schema},
