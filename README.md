@@ -17,7 +17,7 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 21 of 30. Ingestion runs unattended in AWS. At 06:30 Europe/Paris a Lambda
+Day 22 of 30. Ingestion runs unattended in AWS. At 06:30 Europe/Paris a Lambda
 pulls the previous French settlement day from ENTSO-E, validates it against a
 contract, quarantines anything that fails, and merges the rest into an
 append-only Iceberg table. Around 1,400 rows a day.
@@ -166,6 +166,34 @@ Windows host crashed the first run: the parse cache keys files by path, and
 Windows writes them with backslashes. dbt has a virtualenv of its own in the
 image, because installed beside Airflow it would downgrade four packages
 Airflow ships.
+
+### The stream
+
+Redpanda and a producer, in a compose profile of their own.
+
+    make down
+    make stream-up
+
+The producer polls ENTSO-E for the current settlement day every fifteen
+minutes. ENTSO-E publishes it about forty minutes behind real time, so the
+stream sees each period arrive and sometimes change, where the daily Lambda
+only sees the day the morning after. Every poll publishes everything it
+fetched, repeats included, to `gridlens.entsoe.generation.v1`, keyed by
+series. Refusals go to a quarantine topic. ADR-0008 has the topic design.
+
+Values are Avro, with the schema in Redpanda's schema registry under
+`BACKWARD` compatibility. `quantity_mw` is a decimal, not a double, for the
+same reason gold is. The registry refuses a change that would break a reader:
+tried on 2026-10-05, a new required field and `quantity_mw` as a double were
+both refused.
+
+Measured on 2026-10-05: Redpanda 236 MiB, the producer 52 MiB. Redpanda may
+grow to the 512 MB it is given, and with Airflow at its own peak that comes
+within a few dozen MB of the 2 GB WSL cap, so `make down` first and the two
+profiles run one at a time. `make stream-down` keeps the topics.
+
+The stream only exists while this stack is up. Nothing reads it yet: the
+Spark consumer is day 23.
 
 ## Infrastructure
 

@@ -119,6 +119,33 @@ The audit compares three tables, `generation_versions`,
 The diagram draws one arrow to keep it readable. `docs/restatement.md` has the
 steps.
 
+## The stream
+
+```mermaid
+flowchart LR
+    entsoe["ENTSO-E Transparency API<br/>today, about 40 min behind"]
+    ssm["SSM Parameter Store<br/>gridlens/entsoe/token"]
+
+    subgraph compose["Docker Compose, stream profile"]
+        producer["producer<br/>every 15 min, publishes everything"]
+        subgraph redpanda["Redpanda, one node"]
+            obs[("gridlens.entsoe.generation.v1<br/>3 partitions, keyed by series, 14 days")]
+            quar[("gridlens.entsoe.generation.quarantine.v1<br/>json, 30 days")]
+            registry["schema registry<br/>avro, BACKWARD"]
+        end
+    end
+
+    ssm -->|"token"| producer
+    entsoe --> producer
+    producer -->|"avro, 5 byte header"| obs
+    producer -->|"refused rows"| quar
+    producer -->|"registers the schema"| registry
+```
+
+The stream records what ENTSO-E said and when, every poll, repeats included,
+so revisions can be seen as they happen. Nothing consumes it yet. It runs on
+the laptop, one compose profile at a time with Airflow.
+
 ## Operations run by hand
 
 ```mermaid
@@ -162,7 +189,6 @@ defects.
 In dependency order, with the day each is planned for. Nothing above references
 any of it.
 
-- Redpanda and a producer, 22
 - Spark Structured Streaming consumer with watermarks and dedupe, 23
 - Reconciliation of the stream against the batch, and a divergence metric, 24
 - Prometheus and Grafana on freshness, completeness and revision lag, 25
