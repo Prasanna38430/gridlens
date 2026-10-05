@@ -12,10 +12,11 @@ flowchart TD
     entsoe["ENTSO-E Transparency API"]
     ssm["SSM Parameter Store<br/>gridlens/entsoe/token"]
     sched["EventBridge Scheduler<br/>cron 06:30 Europe/Paris"]
+    refetch["EventBridge Scheduler<br/>cron 05:30, the 27 days before yesterday"]
 
     subgraph lambda["Lambda, python 3.12"]
         ingest["gridlens-ingest-entsoe<br/>120s, 512 MB, scheduled"]
-        backfill["gridlens-backfill-entsoe<br/>900s, invoked by Airflow or by hand"]
+        backfill["gridlens-backfill-entsoe<br/>900s, scheduled, also Airflow and by hand"]
     end
 
     gate["contract gate<br/>records, violations, gaps"]
@@ -29,9 +30,10 @@ flowchart TD
 
     athena["Athena, workgroup gridlens<br/>1 GB scan cutoff"]
     glue["Glue Data Catalog<br/>gridlens_bronze"]
-    bronze[("bronze.generation<br/>iceberg, append only<br/>90,031 rows, 98 files")]
+    bronze[("bronze.generation<br/>iceberg, append only<br/>90,232 rows")]
 
     sched -->|"known_at is the scheduled time"| ingest
+    refetch -->|"same, and the window counts back from it"| backfill
     ssm -->|"token, decrypted at call time"| ingest
     ssm --> backfill
     entsoe --> ingest
@@ -53,7 +55,7 @@ contract gate splits the parse three ways, accepted rows are staged as
 newline-delimited json in the raw bucket, and Athena merges that batch into
 Iceberg. Around 1,400 rows a morning.
 
-Three details in that picture carry most of the design.
+Four details in that picture carry most of the design.
 
 **`known_at` comes from the scheduler**, not from the clock inside the
 function. EventBridge substitutes its scheduled time into the payload and that
@@ -65,6 +67,12 @@ timestamp.
 inserts nothing, and a day whose values have not changed inserts nothing
 either, because a subquery drops staged rows matching the newest version
 already held.
+
+**Every recent day is fetched again every morning.** The ingest fetches
+yesterday once. A second schedule re-fetches the 27 days before that through
+the backfill Lambda, and the merge keeps only values that changed. Until
+2026-10-05 nothing did this, and bronze looked as though ENTSO-E almost never
+revises. ADR-0007 has the numbers.
 
 **Gaps go nowhere on purpose.** The gate treats a period the source did not
 publish as a third outcome, neither a record nor a violation, and does not
@@ -135,9 +143,11 @@ flowchart LR
     bronze --> build
 ```
 
-None of these are scheduled. Bronze holds 34 snapshots, the oldest from
-2026-09-06, and 98 data files across 63 partitions. Its metadata json is 3.7
-times the size of the parquet it describes.
+None of these are scheduled. Bronze holds 46 snapshots, the oldest from
+2026-09-06, and 111 data files across 63 partitions. Its metadata json is 4.7
+times the size of the parquet it describes, up from 3.7 the same morning,
+because the first re-fetch of recent days committed twelve times. With
+revisions now arriving daily, compaction and expiry need a schedule.
 
 ## How it is built and deployed
 

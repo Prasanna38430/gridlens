@@ -71,7 +71,8 @@ in reality. A dict keyed on local time drops one of them without complaining.
 EventBridge Scheduler substitutes its scheduled time into the payload, and that
 value is identical across every retry of one firing. Reading the clock instead
 would make each retry look like a fresh revision. Backfills pass it explicitly
-for the same reason.
+for the same reason, and so does the 05:30 re-fetch of the last four weeks,
+which also counts its window back from it.
 
 The visible consequence in the data: scheduled runs carry values like
 `2026-08-28 04:30:00.000000`, exactly on the second. Where you see a value with

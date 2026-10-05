@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -39,10 +39,35 @@ def _entsoe_token() -> str:
     return _token
 
 
+def window(
+    event: dict[str, Any], known_at: datetime, zone_tz: ZoneInfo
+) -> tuple[date, date]:
+    """The settlement days to fetch: given outright, or counted back.
+
+    refetch_days is what the daily schedule sends. It counts back from the day
+    before yesterday, because yesterday belongs to the 06:30 ingest. The anchor
+    is known_at, the scheduled time, not the clock, so a retry an hour later
+    fetches the same days rather than a window shifted by one.
+    """
+    if "start_date" in event and "end_date" in event:
+        return (
+            date.fromisoformat(str(event["start_date"])),
+            date.fromisoformat(str(event["end_date"])),
+        )
+    if "refetch_days" in event:
+        count = int(event["refetch_days"])
+        if count < 1:
+            raise ValueError("refetch_days has to be at least 1")
+        newest = known_at.astimezone(zone_tz).date() - timedelta(days=2)
+        return newest - timedelta(days=count - 1), newest
+    raise ValueError("pass start_date and end_date, or refetch_days")
+
+
 def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]:
     event = event or {}
-    if "start_date" not in event or "end_date" not in event:
-        raise ValueError("start_date and end_date are required")
+    zone_tz = ZoneInfo(_env("GRIDLENS_ZONE_TZ", "Europe/Paris"))
+    known_at = parse_known_at(str(event.get("known_at", "")))
+    start, end = window(event, known_at, zone_tz)
 
     token = _entsoe_token()
     redaction.install(token)
@@ -53,11 +78,11 @@ def handler(event: dict[str, Any] | None, context: Any = None) -> dict[str, Any]
             client,
             StagingArea(_env("GRIDLENS_RAW_BUCKET"), s3),
             boto3.client("athena"),
-            start=date.fromisoformat(str(event["start_date"])),
-            end=date.fromisoformat(str(event["end_date"])),
-            known_at=parse_known_at(str(event.get("known_at", ""))),
+            start=start,
+            end=end,
+            known_at=known_at,
             zone=BiddingZone[_env("GRIDLENS_ZONE", "FR")],
-            zone_tz=ZoneInfo(_env("GRIDLENS_ZONE_TZ", "Europe/Paris")),
+            zone_tz=zone_tz,
             database=_env("GRIDLENS_BRONZE_DATABASE", "gridlens_bronze"),
             workgroup=_env("GRIDLENS_ATHENA_WORKGROUP", "gridlens"),
         )

@@ -13,30 +13,51 @@ LAMBDA_TF = (
 PLACEHOLDER = "<aws.scheduler.scheduled-time>"
 
 INPUT_LINE = re.compile(r"^\s*input\s*=\s*(.+)$", re.MULTILINE)
+SCHEDULE = re.compile(r'^resource "aws_scheduler_schedule" "(\w+)"', re.MULTILINE)
 
 
-def scheduler_input() -> str:
-    """The raw right hand side of the schedule target's input assignment."""
+def scheduler_inputs() -> dict[str, str]:
+    """Each schedule's name and the raw right hand side of its input."""
     body = LAMBDA_TF.read_text(encoding="utf-8")
-    start = body.index('resource "aws_scheduler_schedule"')
-    match = INPUT_LINE.search(body, start)
-    assert match, "the schedule target has no input assignment"
-    return match.group(1).strip()
+    found = {}
+    for match in SCHEDULE.finditer(body):
+        line = INPUT_LINE.search(body, match.end())
+        assert line, f"{match.group(1)} has no input assignment"
+        found[match.group(1)] = line.group(1).strip()
+    return found
 
 
-def test_the_placeholder_is_written_literally():
+def payload(raw: str) -> dict[str, object]:
+    loaded: dict[str, object] = json.loads(raw.strip('"').replace('\\"', '"'))
+    return loaded
+
+
+def test_both_schedules_are_checked():
+    # a third schedule added without these checks would go untested silently
+    assert set(scheduler_inputs()) == {"ingest_entsoe", "refetch_entsoe"}
+
+
+@pytest.mark.parametrize("name", ["ingest_entsoe", "refetch_entsoe"])
+def test_the_placeholder_is_written_literally(name: str):
     # jsonencode escapes the angle brackets and the scheduler then substitutes
     # nothing, which is what broke every run from 2026-08-26.
-    assert PLACEHOLDER in scheduler_input()
+    assert PLACEHOLDER in scheduler_inputs()[name]
 
 
-def test_the_input_is_not_built_with_jsonencode():
-    assert "jsonencode" not in scheduler_input()
+@pytest.mark.parametrize("name", ["ingest_entsoe", "refetch_entsoe"])
+def test_the_input_is_not_built_with_jsonencode(name: str):
+    assert "jsonencode" not in scheduler_inputs()[name]
 
 
-def test_the_input_is_json_carrying_known_at():
-    payload = json.loads(scheduler_input().strip('"').replace('\\"', '"'))
-    assert payload == {"known_at": PLACEHOLDER}
+def test_the_ingest_input_carries_known_at_only():
+    assert payload(scheduler_inputs()["ingest_entsoe"]) == {"known_at": PLACEHOLDER}
+
+
+def test_the_refetch_input_carries_known_at_and_a_window():
+    assert payload(scheduler_inputs()["refetch_entsoe"]) == {
+        "known_at": PLACEHOLDER,
+        "refetch_days": 27,
+    }
 
 
 @pytest.mark.parametrize("escaped", ["\\u003c", "\\u003e"])
