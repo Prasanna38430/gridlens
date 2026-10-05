@@ -1,0 +1,26 @@
+{
+  "type": "record",
+  "name": "GenerationObservation",
+  "namespace": "gridlens",
+  "doc": "One settlement period of one series, as the producer saw it at known_at. The same shape as a bronze row.",
+  "fields": [
+    {"name": "source", "type": "string"},
+    {"name": "source_document_id", "type": ["null", "string"], "default": null},
+    {"name": "zone", "type": "string"},
+    {"name": "production_type", "type": "string"},
+    {"name": "direction", "type": "string"},
+    {"name": "unit", "type": "string"},
+    {"name": "resolution_minutes", "type": "int"},
+    {"name": "valid_time", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {"name": "known_at", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {
+      "name": "source_updated_at",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}],
+      "default": null
+    },
+    {
+      "name": "quantity_mw",
+      "type": {"type": "bytes", "logicalType": "decimal", "precision": 12, "scale": 3}
+    }
+  ]
+}
