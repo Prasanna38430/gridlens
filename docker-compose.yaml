@@ -15,6 +15,10 @@ x-airflow-common: &airflow-common
   build:
     context: ./docker
     dockerfile: airflow.Dockerfile
+    # dbt's pins live with the dbt project. The image reads them from there
+    # rather than keeping a second copy that could drift from the host's.
+    additional_contexts:
+      transform: ./transform
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -34,6 +38,12 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./src:/opt/airflow/project/src:ro
+    # read write, unlike src, since dbt writes into its project by default. The
+    # audit points target/ and logs/ at /tmp instead: sharing target/ with dbt
+    # on the windows host crashed the first run, because the parse cache keys
+    # files by path and windows writes them with backslashes.
+    - ./transform:/opt/airflow/project/transform
+    - ./scripts:/opt/airflow/project/scripts:ro
     - ${HOME}/.aws:/home/airflow/.aws:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
@@ -94,7 +104,12 @@ services:
     # local executor forks task processes in here, and the quality task imports
     # pandas and great expectations. 640m was enough for the smoke dag and is
     # not enough for this one.
-    mem_limit: 1024m
+    #
+    # Measured on 2026-10-01: about 580 MiB idle, 800 running the quality
+    # suite, 891 running dbt for the restatement audit. The two are scheduled
+    # apart, but unpausing after a gap queues both at once, and together they
+    # would pass 1024m and get the container killed.
+    mem_limit: 1536m
 
   airflow-dag-processor:
     <<: *airflow-common

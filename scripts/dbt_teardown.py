@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Drop a pull request's dbt schema, every relation in it, and its data."""
+"""Drop a throwaway dbt schema, every relation in it, and its data."""
 
 from __future__ import annotations
 
@@ -11,10 +11,15 @@ from urllib.parse import urlparse
 
 import boto3
 
-# The only prefix the ci role may create or drop. Checked here as well as in
-# iam, because a teardown pointed at gridlens_silver by a typo should fail in
-# this script rather than rely on a policy denying it.
-PREFIX = "gridlens_ci_"
+# The only schemas this will drop: a pull request's, and the restatement
+# audit's. A fixed list rather than an argument, because a prefix the caller
+# chooses is no check at all.
+#
+# For ci schemas iam refuses anything else as well, but a teardown pointed at
+# gridlens_silver by a typo should fail here rather than rely on a policy
+# denying it. The audit runs with the local profile, so for audit schemas this
+# check is the only one there is.
+PREFIXES = ("gridlens_ci_", "gridlens_audit_")
 
 TERMINAL = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
 
@@ -43,12 +48,14 @@ class DropFailed(RuntimeError):
 
 
 def check_schema(name: str) -> None:
-    """Refuse anything that is not a ci schema with a plain name."""
-    if not name.startswith(PREFIX) or name == PREFIX:
-        raise RefusedSchema(f"{name!r} is not a {PREFIX} schema, refusing to drop it")
-    # the name goes into sql, so it must be exactly what the workflow generated
+    """Refuse anything that is not a ci or audit schema with a plain name."""
+    if not any(name.startswith(p) and name != p for p in PREFIXES):
+        raise RefusedSchema(
+            f"{name!r} is not a ci or audit schema, refusing to drop it"
+        )
+    # the name goes into sql, so it must be exactly what the caller generated
     if not all(c.isalnum() or c == "_" for c in name):
-        raise RefusedSchema(f"{name!r} contains characters a ci schema never has")
+        raise RefusedSchema(f"{name!r} contains characters these schemas never have")
 
 
 def _missing(exc: Exception) -> bool:
@@ -155,7 +162,7 @@ def teardown(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("schema")
-    parser.add_argument("--data-prefix", help="the ci target's s3_data_dir")
+    parser.add_argument("--data-prefix", help="the target's s3_data_dir")
     parser.add_argument("--workgroup", default="gridlens")
     parser.add_argument("--region", default="eu-west-3")
     args = parser.parse_args()

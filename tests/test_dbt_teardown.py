@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from dbt_ci_teardown import (  # noqa: E402
+from dbt_teardown import (  # noqa: E402
     DropFailed,
     RefusedSchema,
     check_schema,
@@ -91,12 +91,25 @@ SCHEMA = "gridlens_ci_pr_14"
 
 
 @pytest.mark.parametrize(
-    "name", ["gridlens_silver", "gridlens_gold", "gridlens_bronze", "gridlens_ci_"]
+    "name",
+    [
+        "gridlens_silver",
+        "gridlens_gold",
+        "gridlens_bronze",
+        "gridlens_ci_",
+        "gridlens_audit_",
+        "gridlens_auditx",
+    ],
 )
 def test_production_schemas_are_refused(name: str):
     # checked in the script as well as in iam, so a typo fails here first
     with pytest.raises(RefusedSchema):
         check_schema(name)
+
+
+@pytest.mark.parametrize("name", [SCHEMA, "gridlens_audit_20260930"])
+def test_ci_and_audit_schemas_are_accepted(name: str):
+    check_schema(name)
 
 
 def test_a_name_that_could_carry_sql_is_refused():

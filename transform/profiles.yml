@@ -23,7 +23,7 @@ gridlens:
       threads: 4
 
     # A pull request's own schema, created by the build and dropped afterwards
-    # by scripts/dbt_ci_teardown.py.
+    # by scripts/dbt_teardown.py.
     #
     # No aws_profile_name. In github actions the credentials arrive as
     # environment variables from the oidc role, and naming a profile that does
@@ -41,4 +41,20 @@ gridlens:
       s3_staging_dir: s3://gridlens-athena-054129814335/dbt/
       s3_data_dir: s3://gridlens-lake-054129814335/ci/
       s3_data_naming: schema_table_unique
+      threads: 4
+
+    # The nightly restatement audit. Rebuilds last month as it stood at the
+    # snapshot production last read, compares, and drops the schema again. The
+    # schema carries the run date, so a teardown that failed yesterday cannot
+    # collide with today.
+    audit:
+      type: athena
+      region_name: eu-west-3
+      database: awsdatacatalog
+      schema: "{{ env_var('DBT_AUDIT_SCHEMA', 'gridlens_audit_local') }}"
+      work_group: gridlens
+      s3_staging_dir: s3://gridlens-athena-054129814335/dbt/
+      s3_data_dir: s3://gridlens-lake-054129814335/audit/
+      s3_data_naming: schema_table_unique
+      aws_profile_name: "{{ env_var('AWS_PROFILE', 'gridlens') }}"
       threads: 4

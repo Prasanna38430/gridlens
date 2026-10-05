@@ -194,5 +194,5 @@ jobs:
         if: always() && steps.aws.outcome == 'success'
         run: |
           account=$(aws sts get-caller-identity --query Account --output text)
-          uv run python scripts/dbt_ci_teardown.py "$DBT_CI_SCHEMA" \
+          uv run python scripts/dbt_teardown.py "$DBT_CI_SCHEMA" \
             --data-prefix "s3://gridlens-lake-$account/ci/"
