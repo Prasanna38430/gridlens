@@ -182,11 +182,11 @@ doubles". It is "no floating point aggregation".
 ## Where this stops
 
 `known_at` is when this project learned a value, not when ENTSO-E published
-it. The daily ingest fetches yesterday once and never looks at that day again,
-so a revision ENTSO-E publishes later is only seen if something fetches the day
-a second time. Bronze holds 89 genuine revisions, every one of them run of
-river on 2026-08-04, and all of them came from backfills. The re-fetch of
-2026-09-18 two weeks on found the 1,307 values it already had unchanged.
+it. Since 2026-10-05 the last four weeks are re-fetched every morning, so a
+revision inside that window is recorded at most a day after it appears.
+Anything ENTSO-E corrects later than four weeks is never seen. Before the
+re-fetch existed, bronze held 89 genuine revisions, all from hand backfills. Its
+first morning found 199 more. ADR-0007 has the detail.
 
 Production gold is rebuilt by hand, so a figure is only as fresh as the last
 `make dbt`. The manifest says which commit and which snapshot it was.

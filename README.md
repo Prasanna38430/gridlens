@@ -22,8 +22,7 @@ pulls the previous French settlement day from ENTSO-E, validates it against a
 contract, quarantines anything that fails, and merges the rest into an
 append-only Iceberg table. Around 1,400 rows a day.
 
-Bronze holds 90,031 rows over 62 settlement days, 2026-08-04 to 2026-10-04,
-in 98 data files. Nothing has been quarantined yet, so the contract has not
+Bronze holds 90,232 rows over 62 settlement days, 2026-08-04 to 2026-10-04. Nothing has been quarantined yet, so the contract has not
 rejected a row in production.
 
 Bronze never updates. A revision is a new row with a later `known_at`:
@@ -35,10 +34,14 @@ Bronze never updates. A revision is a new row with a later `known_at`:
 ENTSO-E moved that figure by 0.19 MW and we found out four days later. Both
 values are still there, and a query bounded on `known_at` reproduces either.
 
-Across the whole table there are 4,265 second versions, of which 89 changed the
-value. Every one of the 89 is hydro run-of-river. The other 4,176 repeat a
-value unchanged and are an artifact of backfills run before dedupe existed on
-day 11, not of the source revising anything.
+Across the whole table there are 4,464 later versions, and 288 of them changed
+the value, across all thirteen production types. 199 of those arrived on
+2026-10-05, the first morning anything went back and re-fetched recent days.
+Before that bronze held 89, all hydro run-of-river on one day. ENTSO-E had been
+revising all along and nothing was asking. A schedule now re-fetches the last
+four weeks every morning, see ADR-0007. The other 4,176 later versions repeat
+a value unchanged and are an artifact of backfills run before dedupe existed
+on day 11, not of the source revising anything.
 
 Gold holds two settlement grade marts, `period_generation_net` and
 `daily_generation_mix`, plus a `run_manifest` that records the git commit and
@@ -202,11 +205,9 @@ exist. Nothing expires bronze snapshots today. Once something does, a
 production build older than the retention window has to be rebuilt before the
 audit can pass.
 
-The daily ingest fetches yesterday once and never looks at that day again.
-A revision ENTSO-E publishes later is only seen if something fetches the day a
-second time. All 89 genuine revisions in bronze came from backfills. For a
-project whose premise is that sources revise, that is the biggest gap, and the
-fix is a lookback that re-fetches recent days rather than a new component.
+Revisions are re-fetched for four weeks. A value ENTSO-E corrects later than
+that is never seen. I do not know yet whether that happens, and if revisions
+start turning up at the far edge of the window it should grow.
 
 `bronze_backfill` fills settlement days that are missing entirely. A day that
 arrives partly, like 2026-09-18 with 92 of 96 periods, fails the quality suite
