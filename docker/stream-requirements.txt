@@ -1,0 +1,9 @@
+# Pinned to what uv.lock resolves, so the producer runs the versions the tests
+# do. boto3 is here for one call, reading the entso-e token from ssm, which is
+# where the lambdas read it too.
+boto3==1.43.72
+confluent-kafka==2.15.1
+fastavro==1.12.2
+httpx==0.28.1
+pydantic==2.13.4
+tzdata==2026.3

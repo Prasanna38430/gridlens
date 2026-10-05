@@ -123,6 +123,64 @@ services:
         condition: service_completed_successfully
     mem_limit: 512m
 
+  # The stream profile, one profile at a time with airflow. Measured on
+  # 2026-10-05: redpanda 236 MiB and the producer 52 MiB after the first polls.
+  # But redpanda is allowed to grow to the 512M it is given, and with airflow
+  # at its own measured peak of 1,348 MiB that is within a few dozen MB of the
+  # 2 GB WSL cap. Too close to run both.
+  #
+  #     make stream-up
+  #
+  # dev-container mode is redpanda's own setting for exactly this, one node on a
+  # laptop: no fsync per write and no core pinning. Losing the last second of
+  # writes in a crash is acceptable here, because every message can be fetched
+  # again from entso-e.
+  redpanda:
+    image: redpandadata/redpanda:v25.2.9
+    profiles: ["stream"]
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+    ports:
+      - "19092:19092"
+      - "18081:18081"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 768m
+    restart: unless-stopped
+
+  producer:
+    image: gridlens-stream:0.1.0
+    build:
+      context: ./docker
+      dockerfile: stream.Dockerfile
+    profiles: ["stream"]
+    environment:
+      GRIDLENS_KAFKA_BOOTSTRAP: redpanda:9092
+      GRIDLENS_SCHEMA_REGISTRY: http://redpanda:8081
+      AWS_PROFILE: gridlens
+      AWS_DEFAULT_REGION: eu-west-3
+    volumes:
+      - ./src:/opt/gridlens/src:ro
+      - ${HOME}/.aws:/home/producer/.aws:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: unless-stopped
+
 volumes:
   airflow-db:
   airflow-logs:
+  redpanda-data:

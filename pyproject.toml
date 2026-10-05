@@ -21,6 +21,8 @@ dev = [
     "pre-commit>=4.0",
     "boto3>=1.43.72",
     "great-expectations>=1.21.0",
+    "confluent-kafka>=2.15.1",
+    "fastavro>=1.12.2",
 ]
 
 [build-system]
