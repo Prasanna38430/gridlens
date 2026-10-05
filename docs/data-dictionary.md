@@ -1,12 +1,28 @@
 # Data dictionary
 
-What is in `gridlens_bronze.generation`, what each column means, and what the
-data actually looks like rather than what the schema permits. Figures measured
-on 2026-09-05 against 48,658 rows covering 32 settlement days, 2026-08-04 to
-2026-09-04, one zone.
+What each layer holds, what each column means, and what the data actually
+looks like rather than what the schema permits.
 
-Table design and the Athena limitations behind it are in `sql/README.md`. Why
-the table is append only is ADR-0004.
+Bronze figures were measured on 2026-09-05 against 48,658 rows covering 32
+settlement days, 2026-08-04 to 2026-09-04, one zone. Silver and gold figures
+were measured on 2026-10-05, when bronze held 90,031 rows over 62 settlement
+days, 2026-08-04 to 2026-10-04.
+
+Bronze table design and the Athena limitations behind it are in
+`sql/README.md`. Why bronze is append only is ADR-0004. How to read any layer
+as it stood at an earlier moment is in `docs/restatement.md`.
+
+```
+gridlens_bronze.generation          one row per version, append only
+  -> gridlens_silver.stg_generation       view, renames and derives
+  -> gridlens_silver.generation_versions  each version with the interval it was believed in
+  -> gridlens_silver.generation_current   view, the newest version of each period
+  -> gridlens_gold.period_generation_net  signed MW per type per period
+  -> gridlens_gold.daily_generation_mix   MWh and share per type per settlement day
+     gridlens_gold.run_manifest           one row per dbt run
+```
+
+# Bronze
 
 ## The grain
 
@@ -211,6 +227,10 @@ WHERE recency = 1
 Both return the same answer. The second one does the sorting again on every
 call, which is the whole reason the first one exists.
 
+Gold has no interval columns, so a gold figure as it stood earlier means
+rebuilding gold with a bound on `known_at`. `docs/restatement.md` has the
+commands and a worked example.
+
 ## What is not here
 
 Gaps. The contract gate produces them as a third outcome, neither record nor
@@ -223,3 +243,127 @@ none exist yet.
 
 RTE. The client and normalizer produce this exact row shape and nothing
 schedules them.
+
+# Silver
+
+Built by dbt from bronze. Nothing in silver or gold is maintained in place:
+every table is derived, so a full rebuild from bronze reproduces it exactly.
+That is what lets the restatement audit compare a rebuild with production and
+mean something by it.
+
+## `stg_generation`
+
+A view. One row in, one row out. It renames nothing and adds two columns every
+later model needs:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `settlement_day` | date | The Paris date of `valid_time`. Not the UTC date, see Partitioning above. |
+| `is_storage` | boolean | True for `B10` and `B25`, the two types that publish both directions. |
+
+It is also where a restatement happens. Given the variables `restate_as_of`,
+`restate_from` and `restate_to`, it filters bronze to what was known at that
+moment over that window. On the production target it refuses them.
+
+## `generation_versions`
+
+Every version of every settlement period, with the window it was believed in.
+90,031 rows, the same as bronze, because each bronze row is one version.
+Iceberg, partitioned by `zone` and `day(valid_time)` like bronze, since the
+as_of read filters on `valid_time` first.
+
+The bronze columns carry over, with `known_at` renamed, plus:
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `known_from` | timestamp | no | Bronze's `known_at`. Renamed because it is now one end of an interval. |
+| `known_to` | timestamp | yes | When the next version of the same period replaced this one. Null while current. |
+| `is_current` | boolean | no | `known_to IS NULL`, because it is the commonest filter. |
+| `settlement_day` | date | no | From staging. |
+| `is_storage` | boolean | no | From staging. |
+
+`known_to` is the next `known_at` for the same `source, zone, production_type,
+direction, valid_time`. The interval is half open, `[known_from, known_to)`, so
+a value learned at exactly t is the one believed at t.
+
+85,766 rows are current. 4,265 have been superseded, and 89 of those were
+superseded by a different value, every one hydro run of river on 2026-08-04.
+The other 4,176 were superseded by the same value. They come from backfills
+run before the merge learned to skip unchanged rows, on day 11, and they stay:
+removing them would mean deleting from a table whose argument is that it never
+deletes.
+
+## `generation_current`
+
+A view over `generation_versions` where `is_current`. 85,766 rows, one per
+series and period. Not materialised: it is one predicate over a partitioned
+table, and a second copy of nearly the whole dataset to save a filter is a bad
+trade.
+
+# Gold
+
+## `period_generation_net`
+
+Signed power per production type per settlement period. 74,074 rows.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `zone` | string | |
+| `valid_time` | timestamp | Start of the period, UTC. |
+| `settlement_day` | date | The Paris date. |
+| `production_type` | string | |
+| `is_storage` | boolean | |
+| `resolution_minutes` | int | |
+| `net_mw` | decimal(38,3) | Generation minus consumption for this type in this period. |
+
+Consumption is negated here, once, so nothing summing this table can count
+storage twice. 12,222 periods net negative: hard coal in 5,661, which only ever
+draws, batteries in 3,573 and pumped storage in 2,923 while they charge, and
+offshore wind in 65.
+
+## `daily_generation_mix`
+
+Energy per production type per settlement day. 806 rows, thirteen types over
+62 days.
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `zone` | string | no | |
+| `settlement_day` | date | no | |
+| `production_type` | string | no | |
+| `is_storage` | boolean | no | |
+| `energy_mwh` | decimal(38,6) | no | Net energy over the day. |
+| `gross_mwh` | decimal(38,6) | no | Sum of the types that net positive over the day. |
+| `share_of_gross` | double | yes | `energy_mwh / gross_mwh`, null where the type nets negative. |
+
+Energy, not power. MW summed over a day at 15 minute resolution is wrong by a
+factor of four, and it is the commonest way to publish a wrong number about a
+grid. `energy_mwh` is the sum of `net_mw * resolution_minutes`, taken in exact
+decimals and divided by 60 once.
+
+Exact on purpose. It used to be a floating point sum, and two builds of the
+same input disagreed on 299 of 364 August rows. `docs/restatement.md` has the
+story. `share_of_gross` is still a double, because one division of two exact
+decimals rounds the same way every time.
+
+144 shares are null: hard coal on all 62 days, batteries on 56 and pumped
+storage on 26, the days each absorbed more than it released. A share of a
+total the type did not contribute to means nothing.
+
+## `run_manifest`
+
+One row per production dbt run, appended and never updated. 7 rows.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `dbt_invocation_id` | string | Unique per run. |
+| `run_started_at` | timestamp | |
+| `git_sha` | string | The commit that built the run. `unknown` on the 2 rows from before `make dbt` passed it. |
+| `factor_version` | string | `none` until emission factors are ingested. |
+| `dbt_version` | string | |
+| `bronze_snapshot_id` | bigint | The Iceberg snapshot of bronze the run read. |
+| `bronze_committed_at` | timestamp | When that snapshot was committed. The restatement audit uses it as its bound. |
+
+The snapshot id is the stronger half. Bronze is append only, so a snapshot id
+names an exact set of rows for as long as the snapshot exists, where a
+timestamp names whatever had been committed by then.
