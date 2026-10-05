@@ -74,13 +74,14 @@ def stage_dependencies() -> None:
 
 
 def stage_source() -> None:
-    # quality/ imports great_expectations, which is a dev dependency and is
-    # deliberately not in the bundle. nothing in the handlers imports it, so
-    # shipping it is dead weight that would fail on import if anyone tried.
+    # quality/ imports great_expectations and stream/ imports confluent_kafka,
+    # both dev dependencies and deliberately not in the bundle. nothing in the
+    # handlers imports either, so shipping them is dead weight that would fail
+    # on import if anyone tried.
     shutil.copytree(
         ROOT / "src" / "gridlens",
         STAGE / "gridlens",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "quality"),
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "quality", "stream"),
     )
 
 
