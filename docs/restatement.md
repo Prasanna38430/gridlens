@@ -177,7 +177,8 @@ difference is a real one.
 `share_of_gross` is still a double. One division of two exact decimals rounds
 the same way every time, so it is deterministic, where a decimal quotient would
 take the scale of its inputs and round every share to 1e-6. The rule is not "no
-doubles". It is "no floating point aggregation".
+doubles". It is "no floating point aggregation". ADR-0006 records the decision
+and the options I turned down.
 
 ## Where this stops
 
