@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help sync hooks fmt lint typecheck test style tf check env up down logs password dbt dbt-debug dbt-install
+.PHONY: help sync hooks fmt lint typecheck test style tf check env up down logs password dbt dbt-debug dbt-install stream-up stream-down stream-logs
 
 # spelled out rather than parsed out of the ## comments, because make on
 # windows shells out to cmd.exe and there is no grep or awk there
@@ -65,6 +65,20 @@ down: ## stop airflow, keeping the database volume
 
 logs: ## follow the scheduler log
 	$(COMPOSE) logs -f airflow-scheduler
+
+# The stream profile is separate on purpose: airflow at its peak plus redpanda
+# at its 512M reservation comes within a few dozen MB of the 2 GB WSL cap.
+# Bring one down before bringing the other up.
+STREAM = docker compose --env-file .env.docker --profile stream
+
+stream-up: env ## start redpanda and the producer
+	$(STREAM) up -d --build
+
+stream-down: ## stop redpanda and the producer, keeping the topics
+	$(STREAM) down
+
+stream-logs: ## follow the producer
+	$(STREAM) logs -f producer
 
 password: ## print the generated airflow admin password
 	$(COMPOSE) exec airflow-apiserver cat /opt/airflow/simple_auth_manager_passwords.json.generated
