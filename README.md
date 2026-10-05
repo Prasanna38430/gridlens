@@ -17,14 +17,14 @@ built on top can be read as it stands today, or as it stood on a given date.
 
 ## Status
 
-Day 14 of 30. Ingestion runs unattended in AWS. At 06:30 Europe/Paris a Lambda
+Day 21 of 30. Ingestion runs unattended in AWS. At 06:30 Europe/Paris a Lambda
 pulls the previous French settlement day from ENTSO-E, validates it against a
 contract, quarantines anything that fails, and merges the rest into an
 append-only Iceberg table. Around 1,400 rows a day.
 
-Bronze holds 40,351 rows over 26 settlement days, 2026-08-04 to 2026-08-29, in
-30 data files totalling 239 KB. Nothing has been quarantined yet, so the
-contract has not rejected a row in production.
+Bronze holds 90,031 rows over 62 settlement days, 2026-08-04 to 2026-10-04,
+in 98 data files. Nothing has been quarantined yet, so the contract has not
+rejected a row in production.
 
 Bronze never updates. A revision is a new row with a later `known_at`:
 
@@ -50,7 +50,14 @@ Silver answers the as_of question now. `generation_versions` carries the
 window each version was believed in as a half open interval, so reading the
 table as it stood on a past date is a range predicate rather than a window
 function over every version. `generation_current` is that table filtered to the
-newest version of each period. The restatement endpoint is still to come.
+newest version of each period.
+
+Restatement works end to end. Settlement day 2026-09-18 arrived an hour short,
+and the hour was fetched again on 2026-10-05. Gold built on 2026-09-30 said
+nuclear produced 861,705.115 MWh that day. Gold today says 899,661.015. Both
+figures can be rebuilt on demand, and a daily audit checks that last month
+rebuilds to exactly what production holds. The queries are in
+`docs/restatement.md`. Serving that over HTTP is still to come.
 
 The first thing the two sources disagreed about is worth stating early. On
 26 October 2025, the day the clocks went back, the French day is 25 hours long.
@@ -58,16 +65,21 @@ ENTSO-E publishes all of it. RTE publishes 24 hourly values across the 25 hour
 window and marks nothing, so an hour of French generation is missing from that
 feed with no indication it was ever there.
 
+The architecture as it runs is in `docs/architecture.md`, and every table and
+column in `docs/data-dictionary.md`.
+
 ## Repository rules
 
 CI runs ruff, mypy, pytest, the writing style check, a linux rebuild of the
-Lambda bundle, and `terraform plan` against the real account through GitHub
-OIDC. No AWS keys exist in the repository or in its secrets.
+Lambda bundle, `terraform plan` against the real account through GitHub OIDC,
+and a dbt build of whatever models a pull request changes, in a schema of its
+own. No AWS keys exist in the repository or in its secrets.
 
 `main` is covered by a ruleset that blocks deletion, blocks force pushes,
-requires linear history and lists the three CI jobs as required status checks.
-It does not require pull requests. Everything goes through a short-lived
-branch and a PR regardless.
+requires linear history and requires the `python`, `package` and `terraform`
+jobs to pass. The `dbt` job is not required yet. The ruleset does not require
+pull requests. Everything goes through a short-lived branch and a PR
+regardless.
 
 ## Intended stack
 
@@ -104,12 +116,12 @@ password Airflow generates on first start. `make password` prints it. `make
 down` stops everything and keeps the database volume, `make logs` follows the
 scheduler.
 
-Measured on an 8 GB machine with WSL2 capped at 2 GB: 1,238 MiB across all
-four containers at the worst moment so far, with the quality suite running.
-dbt in the restatement audit takes the scheduler container alone to 891 MiB.
-That budget is why every service sits behind a
-compose profile, and why Redpanda, Spark and Marquez will get profiles of their
-own rather than joining this one.
+Measured on an 8 GB machine with WSL2 capped at 2 GB: 1,348 MiB across all
+four containers at the worst moment so far, on 2026-10-05, with the quality
+suite and the restatement audit running at once. The scheduler container,
+where tasks run, peaked at 926 MiB of its 1,536 MiB limit. That budget is why
+every service sits behind a compose profile, and why Redpanda, Spark and
+Marquez will get profiles of their own rather than joining this one.
 
 Four DAGs so far. `bronze_quality` runs the expectation suite every morning
 at 07:30 Paris, after the EventBridge ingest has landed, and fails loudly when
@@ -129,8 +141,9 @@ whatever the outcome.
 The first audit, run by hand, failed. 299 of 364 August rows differed between
 two builds of identical input, because daily energy was summed in floating
 point and the last digits depended on the order Athena's workers added it up.
-Gold now sums in exact decimals. September's audit matched on 39,773 silver
-rows, 34,297 period rows and 377 daily rows, with zero differences either way.
+Gold now sums in exact decimals. On 2026-10-05 September's audit matched on
+41,207 silver rows, 35,540 period rows and 390 daily rows, with zero
+differences either way.
 
 The backfill exists because the same repair was done by hand three times in a
 fortnight, twice after a broken scheduler payload and once after ENTSO-E
@@ -147,9 +160,12 @@ because this repository sits inside OneDrive and pointing a process that writes
 log files every few seconds at a syncing folder invites file locks. And `src`
 is bind mounted read only onto `PYTHONPATH` rather than installed, so a DAG
 imports the same code the tests run against with no rebuild step.
-`transform` is mounted read write, because dbt writes `target/` and `logs/`
-inside the project, and dbt has a virtualenv of its own in the image rather
-than sharing Airflow's packages.
+`transform` is mounted read write, but the audit points dbt's `target/` and
+`logs/` at `/tmp` inside the container. Sharing `target/` with dbt on the
+Windows host crashed the first run: the parse cache keys files by path, and
+Windows writes them with backslashes. dbt has a virtualenv of its own in the
+image, because installed beside Airflow it would downgrade four packages
+Airflow ships.
 
 ## Infrastructure
 
@@ -186,6 +202,20 @@ exist. Nothing expires bronze snapshots today. Once something does, a
 production build older than the retention window has to be rebuilt before the
 audit can pass.
 
+The daily ingest fetches yesterday once and never looks at that day again.
+A revision ENTSO-E publishes later is only seen if something fetches the day a
+second time. All 89 genuine revisions in bronze came from backfills. For a
+project whose premise is that sources revise, that is the biggest gap, and the
+fix is a lookback that re-fetches recent days rather than a new component.
+
+`bronze_backfill` fills settlement days that are missing entirely. A day that
+arrives partly, like 2026-09-18 with 92 of 96 periods, fails the quality suite
+and has to be re-fetched by hand.
+
+Airflow runs on a laptop. Its checks and repairs happen only while the laptop is
+on and Docker is running, and a failure is visible only to someone who opens
+the UI.
+
 ## What broke
 
 The daily schedule failed silently for two mornings, 2026-08-26 and
@@ -204,3 +234,11 @@ outage and it stays in the data.
 
 The freshness check in the quality suite would have caught this on the second
 morning. It was not scheduled. That is the lesson worth more than the fix.
+
+Settlement day 2026-09-18 arrived on 09-19 with an hour missing, 92 periods of
+96. The quality suite was built for exactly this and flagged it. Nobody saw
+that for two weeks: Airflow only runs while Docker is up on my laptop, and a
+failed task in a UI nobody opens is a log line, not an alert. I found it by
+accident on 2026-10-01 while measuring container memory. Re-fetching the day
+on 2026-10-05 brought the hour back, and that re-fetch is now the worked
+example in `docs/restatement.md`.
