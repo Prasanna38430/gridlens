@@ -123,7 +123,7 @@ steps.
 
 ```mermaid
 flowchart LR
-    entsoe["ENTSO-E Transparency API<br/>today, about 40 min behind"]
+    entsoe["ENTSO-E Transparency API<br/>today, hourly batches"]
     ssm["SSM Parameter Store<br/>gridlens/entsoe/token"]
 
     subgraph compose["Docker Compose, stream profile"]

@@ -175,9 +175,9 @@ Redpanda and a producer, in a compose profile of their own.
     make stream-up
 
 The producer polls ENTSO-E for the current settlement day every fifteen
-minutes. ENTSO-E publishes it about forty minutes behind real time, so the
-stream sees each period arrive and sometimes change, where the daily Lambda
-only sees the day the morning after. Every poll publishes everything it
+minutes. ENTSO-E publishes it in what look like hourly batches, about half an
+hour after each hour, so the stream sees periods arrive through the day and can
+see them change, where the daily Lambda only sees the day the morning after. Every poll publishes everything it
 fetched, repeats included, to `gridlens.entsoe.generation.v1`, keyed by
 series. Refusals go to a quarantine topic. ADR-0008 has the topic design.
 

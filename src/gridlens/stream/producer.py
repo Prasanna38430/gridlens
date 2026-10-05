@@ -1,10 +1,10 @@
 """Poll ENTSO-E for today's generation and publish what it says, every time.
 
 The daily Lambda learns a settlement day once, the morning after. This learns
-it while it happens: ENTSO-E publishes the current day about forty minutes
-behind real time, and a poll every fifteen minutes sees each period appear and
-sometimes change. Day 24 compares what this stream said with what the morning
-fetch settled on.
+it while it happens: ENTSO-E publishes the current day in what look like
+hourly batches, about half an hour after each hour, and a poll every fifteen
+minutes notices each batch soon after it lands and sees values change. Day 24
+compares what this stream said with what the morning fetch settled on.
 
 Every poll publishes everything it fetched, unchanged values included. The
 topic is a record of what the source said and when, so a repeated value is a
@@ -38,8 +38,9 @@ PARIS = ZoneInfo("Europe/Paris")
 POLL_SECONDS = 15 * 60
 
 # The last periods of a day are published after midnight, so the previous day
-# stays in the poll until this hour Paris time. Three hours covers the forty
-# minute lag several times over without polling a finished day all morning.
+# stays in the poll until this hour Paris time. Three hours covers the half
+# hour lag seen so far several times over without polling a finished day all
+# morning.
 YESTERDAY_UNTIL_HOUR = 3
 
 

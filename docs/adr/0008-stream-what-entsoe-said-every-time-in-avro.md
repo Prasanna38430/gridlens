@@ -12,13 +12,16 @@ once a consumer depends on it.
 
 The stream needs a real source. Replaying bronze into a topic would be a batch
 wearing a costume. ENTSO-E turned out to be the answer: it publishes the
-current day as it goes. At 07:27 UTC on 2026-10-05 it already had 36 periods of
-that day, up to 06:45, so it runs about forty minutes behind real time. The
-daily Lambda only ever saw a day the morning after.
+current day as it goes. On 2026-10-05 the newest period it had ended 27, 26
+and 42 minutes before polls at 07:27, 08:26 and 08:42 UTC, and the 08:42 poll
+had nothing the 08:26 one lacked. That looks like hourly batches landing about
+half an hour after each hour. Three observations, not a rule. The daily Lambda
+only ever saw a day the morning after.
 
 ## Decisions
 
-**The producer polls today's settlement day every fifteen minutes**, and
+**The producer polls today's settlement day every fifteen minutes**, so a
+batch is noticed within a quarter of an hour of landing whenever it lands, and
 yesterday's too until 03:00 Paris, since the last periods of a day are
 published after midnight. It runs in a small container next to Redpanda and
 reads the ENTSO-E token from SSM, where the Lambdas read it.
