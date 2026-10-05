@@ -76,9 +76,12 @@ resource "aws_iam_role_policy" "scheduler_invoke" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.ingest_entsoe.arn
+      Effect = "Allow"
+      Action = "lambda:InvokeFunction"
+      Resource = [
+        aws_lambda_function.ingest_entsoe.arn,
+        aws_lambda_function.backfill_entsoe.arn,
+      ]
     }]
   })
 }
@@ -124,8 +127,8 @@ resource "aws_scheduler_schedule" "ingest_entsoe" {
 
 # Same package, different entry point. Backfill walks a range of days and can
 # take minutes, so it gets the full fifteen rather than the two the daily run
-# needs. Nothing schedules it: it is invoked by hand today and by airflow from
-# day 15.
+# needs. The schedule below runs it every morning to re-fetch recent days, and
+# airflow and people invoke it for days that are missing.
 resource "aws_cloudwatch_log_group" "backfill_entsoe" {
   name              = "/aws/lambda/${local.backfill_function}"
   retention_in_days = 14
@@ -149,4 +152,41 @@ resource "aws_lambda_function" "backfill_entsoe" {
   }
 
   depends_on = [aws_cloudwatch_log_group.backfill_entsoe]
+}
+
+# The daily run fetches yesterday once, and a revision ENTSO-E publishes after
+# that was invisible unless someone happened to backfill the day. The first
+# re-fetch of seven days on 2026-10-05 found 53 changed values, gas moving by up
+# to 418 MW. So this re-fetches the 27 days before yesterday every morning.
+#
+# 27 because the only revisions seen before this arrived 18 to 22 days after
+# their settlement day, and 27 plus yesterday stays inside the backfill's 31 day
+# limit. About 9.5 seconds a day, so roughly four and a half minutes a run.
+#
+# 05:30 Paris, an hour before the ingest, so the two never merge into bronze at
+# the same time. Retries stop after half an hour for the same reason.
+resource "aws_scheduler_schedule" "refetch_entsoe" {
+  name = "gridlens-refetch-entsoe"
+
+  schedule_expression          = "cron(30 5 * * ? *)"
+  schedule_expression_timezone = "Europe/Paris"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.backfill_entsoe.arn
+    role_arn = aws_iam_role.scheduler.arn
+
+    # written out for the same reason as the ingest's input above. known_at is
+    # also what the window is counted back from, so a retry re-fetches the same
+    # days with the same stamp and merges nothing new.
+    input = "{\"known_at\": \"<aws.scheduler.scheduled-time>\", \"refetch_days\": 27}"
+
+    retry_policy {
+      maximum_retry_attempts       = 2
+      maximum_event_age_in_seconds = 1800
+    }
+  }
 }
